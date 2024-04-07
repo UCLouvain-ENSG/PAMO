@@ -43,7 +43,7 @@ typedef struct FTPThreadCtx_ {
     PrefilterRuleStore *pmq;
 } FTPThreadCtx;
 
-#define FTP_MPM mpm_default_matcher
+#define FTP_MPM mpm_chosen_matcher
 
 static MpmCtx *ftp_mpm_ctx = NULL;
 
@@ -410,12 +410,11 @@ static int FTPParseRequestCommand(
         FTPThreadCtx *td, FtpLineState *line, const FtpCommand **cmd_descriptor)
 {
     SCEnter();
-
     /* I don't like this pmq reset here.  We'll devise a method later, that
      * should make the use of the mpm very efficient */
     PmqReset(td->pmq);
     int mpm_cnt = mpm_table[FTP_MPM].Search(
-            ftp_mpm_ctx, td->ftp_mpm_thread_ctx, td->pmq, line->buf, line->len);
+            ftp_mpm_ctx, td->ftp_mpm_thread_ctx, td->pmq, line->buf, line->len, NULL);
     if (mpm_cnt) {
         *cmd_descriptor = &FtpCommands[td->pmq->rule_id_array[0]];
         SCReturnInt(1);

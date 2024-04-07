@@ -34,8 +34,9 @@
 #include "util-profiling.h"
 #include "util-validate.h"
 #include "action-globals.h"
+#include "util-mpm-rxp.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 /* Number of freed packet to save for one pool before freeing them. */
 #define MAX_PENDING_RETURN_PACKETS 32
@@ -85,6 +86,7 @@ void PacketPoolWait(void)
         SC_ATOMIC_SET(my_pool->return_stack.return_threshold, 1);
 
         SCMutexLock(&my_pool->return_stack.mutex);
+        SCLogNotice("Waiting for packets... Consider increasing the pool size. RESULT-PACKETPOOLWAIT 1");
         SCCondWait(&my_pool->return_stack.cond, &my_pool->return_stack.mutex);
         SCMutexUnlock(&my_pool->return_stack.mutex);
 
@@ -178,6 +180,11 @@ Packet *PacketPoolGetPacket(void)
  */
 void PacketPoolReturnPacket(Packet *p)
 {
+    if (p->rxp.async_in_progress) {
+        /* we're in the middle of an async operation, we can't free the packet */
+        return;
+    }
+    
     PktPool *my_pool = GetThreadPacketPool();
     PktPool *pool = p->pool;
     if (pool == NULL) {
@@ -337,6 +344,9 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
     SCEnter();
     SCLogDebug("Packet %p, p->root %p, alloced %s", p, p->root, BOOL2STR(p->pool == NULL));
 
+    if (p->rxp.async_in_progress)
+        return; // return early as we need this packet to keep around
+
     if (PacketIsTunnel(p)) {
         SCLogDebug("Packet %p is a tunnel packet: %s",
             p,p->root ? "upper layer" : "tunnel root");
@@ -479,8 +489,8 @@ void TmqhReleasePacketsToPacketPool(PacketQueue *pq)
  */
 void PacketPoolPostRunmodes(void)
 {
-    extern uint16_t max_pending_packets;
-    uint16_t pending_packets = max_pending_packets;
+    extern uint32_t max_pending_packets;
+    uint32_t pending_packets = max_pending_packets;
     if (pending_packets < RESERVED_PACKETS) {
         FatalError("'max-pending-packets' setting "
                    "must be at least %d",
@@ -498,6 +508,6 @@ void PacketPoolPostRunmodes(void)
     if (max_pending_return_packets >= RESERVED_PACKETS)
         max_pending_return_packets -= RESERVED_PACKETS;
 
-    SCLogDebug("detect threads %u, max packets %u, max_pending_return_packets %u",
+    SCLogInfo("detect threads %u, max packets %u, max_pending_return_packets %u",
             threads, packets, max_pending_return_packets);
 }

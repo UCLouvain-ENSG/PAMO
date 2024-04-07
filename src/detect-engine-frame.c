@@ -99,7 +99,7 @@ typedef struct PrefilterMpmFrameCtx {
 } PrefilterMpmFrameCtx;
 
 static int FrameStreamDataPrefilterFunc(
-        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset)
+        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset, Packet *p)
 {
     struct FrameStreamData *fsd = cb_data;
     SCLogDebug("prefilter: fsd %p { det_ctx:%p, transforms:%p, frame:%p, list_id:%d, idx:%u, "
@@ -124,10 +124,9 @@ static int FrameStreamDataPrefilterFunc(
 
     if (data != NULL && data_len >= mpm_ctx->minlen) {
         // PrintRawDataFp(stdout, data, data_len);
-
+        FatalError("Not implemented - don't use frames");
         (void)mpm_table[mpm_ctx->mpm_type].Search(
-                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len);
-        SCLogDebug("det_ctx->pmq.rule_id_array_cnt %u", det_ctx->pmq.rule_id_array_cnt);
+                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len, NULL);
         PREFILTER_PROFILING_ADD_BYTES(det_ctx, data_len);
     }
     return more_chunks;
@@ -167,8 +166,7 @@ static void PrefilterMpmFrame(DetectEngineThreadCtx *det_ctx, const void *pectx,
 
         if (data != NULL && data_len >= mpm_ctx->minlen) {
             (void)mpm_table[mpm_ctx->mpm_type].Search(
-                    mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len);
-            SCLogDebug("det_ctx->pmq.rule_id_array_cnt %u", det_ctx->pmq.rule_id_array_cnt);
+                    mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len, NULL);
             PREFILTER_PROFILING_ADD_BYTES(det_ctx, data_len);
         }
     } else if (p->proto == IPPROTO_TCP) {
@@ -194,9 +192,6 @@ static void PrefilterMpmFrame(DetectEngineThreadCtx *det_ctx, const void *pectx,
     } else {
         DEBUG_VALIDATE_BUG_ON(1);
     }
-    SCLogDebug("packet:%" PRIu64
-               ", prefilter done running on list %d -> frame field type %u; have %u matches",
-            p->pcap_cnt, ctx->list_id, frame->type, det_ctx->pmq.rule_id_array_cnt);
 }
 
 static void PrefilterMpmFrameFree(void *ptr)
@@ -420,7 +415,7 @@ static bool BufferSetup(struct FrameStreamData *fsd, InspectionBuffer *buffer, c
 }
 
 static int FrameStreamDataInspectFunc(
-        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset)
+        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset, Packet *packet_not_usedhere)
 {
     struct FrameStreamData *fsd = cb_data;
     SCLogDebug("inspect: fsd %p { det_ctx:%p, transforms:%p, s:%p, s->id:%u, frame:%p, list_id:%d, "

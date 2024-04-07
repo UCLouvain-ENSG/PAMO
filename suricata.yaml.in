@@ -749,6 +749,13 @@ dpdk:
       # - auto takes all cores
       # in IPS mode it is required to specify the number of cores and the numbers on both interfaces must match
       threads: auto
+      rxp-min-buflen: 1 # minimum number of bytes that buffer needs to contain to be evaluated by RXP engine. Smaller buffers are passed to HS falback
+      # 1 - use RXP engine for all packets
+      # inbetween - you get mix of both engines
+      # 100000000 - use Hyperscan engine for all packets
+      # This is a list of MPM group IDs which will be compiled to RXP, groups not listed here will be compiled to SW MPM (Hyperscan)
+      # allowed syntax: "all" or 1,2,3 or "1-3" - individual ids don't need to be quoted
+      # rxp-mpm-groupids: [ "all" ] # default is all
       # interrupt-mode: false # true to switch to interrupt mode 
       promisc: true # promiscuous mode - capture all packets
       multicast: true # enables also detection on multicast packets

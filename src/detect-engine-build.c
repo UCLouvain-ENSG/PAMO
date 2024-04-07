@@ -51,6 +51,8 @@
 #define DETECT_PGSCORE_RULE_NO_MPM           55  /* Rule does not contain MPM */
 #define DETECT_PGSCORE_RULE_SYN_ONLY         33  /* Rule needs SYN check */
 
+bool fastpattern_length_issue = false;
+
 void SigCleanSignatures(DetectEngineCtx *de_ctx)
 {
     if (de_ctx == NULL)
@@ -1906,7 +1908,6 @@ int SigPrepareStage2(DetectEngineCtx *de_ctx)
             DetectEngineAddDecoderEventSig(de_ctx, s);
         }
     }
-
     IPOnlyPrepare(de_ctx);
     IPOnlyPrint(de_ctx, &de_ctx->io_ctx);
     return 0;
@@ -2028,6 +2029,31 @@ int SigPrepareStage4(DetectEngineCtx *de_ctx)
         cnt++;
     }
     SCLogPerf("Unique rule groups: %u", cnt);
+
+    if (de_ctx->mpm_matcher == MPM_RXP) {
+        for (uint32_t idx = 0; idx < de_ctx->sgh_array_cnt; idx++) {
+            SigGroupHead *sgh = de_ctx->sgh_array[idx];
+            if (sgh == NULL)
+                continue;
+
+            for (uint32_t x = 0; x < sgh->init->sig_cnt; x++) {
+                const Signature *s = sgh->init->match_array[x];
+                if (s == NULL)
+                    continue;
+
+                if (RuleGetMpmPatternSize(s) == 1) {
+                    fastpattern_length_issue = true;
+                    SCLogWarning("Sig %u has fastpattern of size 1 - it can break RXP compilation", s->id);
+                }
+            }
+
+        }
+
+        if (fastpattern_length_issue) {
+            SCLogWarning("Some signatures have fastpatterns of size 1 - this can break RXP compilation - run this command to filter out the offensive signatures");
+            SCLogWarning("awk '/Warning: detect: Sig/ {print $9}' /tmp/suricata.log | sed 's/Sig //g' | sort -u | xargs -I {} sed -i '/sid:{};/s/^/# /' ../surrexcata/data/emerging-all-rxp-modified.rules");
+        }
+    }
 
     MpmStoreReportStats(de_ctx);
 
@@ -2181,7 +2207,6 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
     if (SigPrepareStage4(de_ctx) != 0) {
         FatalError("initializing the detection engine failed");
     }
-
     int r = DetectMpmPrepareBuiltinMpms(de_ctx);
     r |= DetectMpmPrepareAppMpms(de_ctx);
     r |= DetectMpmPreparePktMpms(de_ctx);

@@ -80,6 +80,8 @@ static int LogStatsLogger(ThreadVars *tv, void *thread_data, const StatsTable *s
 
     /* Calculate the Engine uptime */
     double up_time_d = difftime(tval.tv_sec, st->start_time);
+    long process_time_us = (tval.tv_sec * 1000000 + tval.tv_usec) -
+        (st->process_start_time.tv_sec * 1000000 + st->process_start_time.tv_usec);
     int up_time = (int)up_time_d; // ignoring risk of overflow here
     int sec = up_time % 60;     // Seconds in a minute
     int in_min = up_time / 60;
@@ -94,12 +96,15 @@ static int LogStatsLogger(ThreadVars *tv, void *thread_data, const StatsTable *s
             "%02d:%02d:%02d (uptime: %"PRId32"d, %02dh %02dm %02ds)\n",
             tms->tm_mon + 1, tms->tm_mday, tms->tm_year + 1900, tms->tm_hour,
             tms->tm_min, tms->tm_sec, days, hours, min, sec);
+
+    MemBufferWriteString(aft->buffer, "Processing time: %" PRId64 "us\n", process_time_us);
     MemBufferWriteString(aft->buffer, "----------------------------------------------"
             "--------------------------------------\n");
     MemBufferWriteString(aft->buffer, "%-45s | %-25s | %-s\n", "Counter", "TM Name",
             "Value");
     MemBufferWriteString(aft->buffer, "----------------------------------------------"
             "--------------------------------------\n");
+
 
     /* global stats */
     uint32_t u = 0;

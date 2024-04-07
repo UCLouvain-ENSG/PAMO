@@ -73,4 +73,6 @@ void MpmHSRegister(void);
 
 void MpmHSGlobalCleanup(void);
 
+int mpm_hs_count(MpmCtx *mpm_ctx);
+
 #endif /* SURICATA_UTIL_MPM_HS__H */

@@ -242,6 +242,7 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 /** Mutex or RWLocks for the flow. */
 //#define FLOWLOCK_RWLOCK
 #define FLOWLOCK_MUTEX
+//#define FLOWLOCK_BIASEDLOCK
 
 #ifdef FLOWLOCK_RWLOCK
     #ifdef FLOWLOCK_MUTEX
@@ -249,8 +250,19 @@ typedef struct AppLayerParserState_ AppLayerParserState;
     #endif
 #endif
 
-#ifdef FLOWLOCK_RWLOCK
+#ifdef FLOWLOCK_BIASEDLOCK
+    #include "biased.h"
+    #define FLOWLOCK_INIT(fb) biased_init(&(fb)->lb, thread_id)
+    #define FLOWLOCK_SET_OWNER(fb) biased_set_owner(&(fb)->lb, thread_id)
+    #define FLOWLOCK_DESTROY(fb) biased_destroy(&(fb)->lb)
+    #define FLOWLOCK_RDLOCK(fb) biased_lock(&(fb)->lb)
+    #define FLOWLOCK_WRLOCK(fb) biased_lock(&(fb)->lb)
+    #define FLOWLOCK_TRYRDLOCK(fb) biased_trylock(&(fb)->lb)
+    #define FLOWLOCK_TRYWRLOCK(fb) biased_trylock(&(fb)->lb)
+    #define FLOWLOCK_UNLOCK(fb) biased_unlock(&(fb)->lb)
+#elif defined FLOWLOCK_RWLOCK
     #define FLOWLOCK_INIT(fb) SCRWLockInit(&(fb)->r, NULL)
+    #define FLOWLOCK_SET_OWNER(fb)
     #define FLOWLOCK_DESTROY(fb) SCRWLockDestroy(&(fb)->r)
     #define FLOWLOCK_RDLOCK(fb) SCRWLockRDLock(&(fb)->r)
     #define FLOWLOCK_WRLOCK(fb) SCRWLockWRLock(&(fb)->r)
@@ -259,6 +271,7 @@ typedef struct AppLayerParserState_ AppLayerParserState;
     #define FLOWLOCK_UNLOCK(fb) SCRWLockUnlock(&(fb)->r)
 #elif defined FLOWLOCK_MUTEX
     #define FLOWLOCK_INIT(fb) SCMutexInit(&(fb)->m, NULL)
+    #define FLOWLOCK_SET_OWNER(fb)
     #define FLOWLOCK_DESTROY(fb) SCMutexDestroy(&(fb)->m)
     #define FLOWLOCK_RDLOCK(fb) SCMutexLock(&(fb)->m)
     #define FLOWLOCK_WRLOCK(fb) SCMutexLock(&(fb)->m)
@@ -430,10 +443,12 @@ typedef struct Flow_
 
 #ifdef FLOWLOCK_RWLOCK
     SCRWLock r;
+#elif defined FLOWLOCK_BIASEDLOCK
+    BiasedLock lb;
 #elif defined FLOWLOCK_MUTEX
     SCMutex m;
 #else
-    #error Enable FLOWLOCK_RWLOCK or FLOWLOCK_MUTEX
+    #error Enable FLOWLOCK_RWLOCK or FLOWLOCK_MUTEX or FLOWLOCK_BIASEDLOCK
 #endif
 
     /** protocol specific data pointer, e.g. for TcpSession */
@@ -492,6 +507,9 @@ typedef struct Flow_
     uint32_t tosrcpktcnt;
     uint64_t todstbytecnt;
     uint64_t tosrcbytecnt;
+
+    // Number of RXP asynchronous operations in progress
+    uint32_t rxp_async_ops;
 
     Storage storage[];
 } Flow;

@@ -1988,16 +1988,19 @@ bool DetectEnginePktInspectionRun(ThreadVars *tv,
 {
     SCEnter();
 
+    bool ret = true;
+    PACKET_PROFILING_DETECT_START(p, PROF_DETECT_RULE_INSPECT);
     for (DetectEnginePktInspectionEngine *e = s->pkt_inspect; e != NULL; e = e->next) {
         if (e->v1.Callback(det_ctx, e, s, p, alert_flags) != DETECT_ENGINE_INSPECT_SIG_MATCH) {
-            SCLogDebug("sid %u: e %p Callback returned no match", s->id, e);
-            return false;
+            ret = false;
+            break;
         }
         SCLogDebug("sid %u: e %p Callback returned true", s->id, e);
     }
 
-    SCLogDebug("sid %u: returning true", s->id);
-    return true;
+    SCLogDebug("sid %u: returning %s", s->id, ret ? "true" : "false");
+    PACKET_PROFILING_DETECT_END(p, PROF_DETECT_RULE_INSPECT);
+    return ret;
 }
 
 /**
@@ -2726,7 +2729,7 @@ static int DetectEngineCtxLoadConf(DetectEngineCtx *de_ctx)
         /* for now, since we still haven't implemented any intelligence into
          * understanding the patterns and distributing mpm_ctx across sgh */
         if (de_ctx->mpm_matcher == MPM_AC || de_ctx->mpm_matcher == MPM_AC_KS ||
-                de_ctx->mpm_matcher == MPM_HS) {
+                de_ctx->mpm_matcher == MPM_HS || de_ctx->mpm_matcher == MPM_RXP) {
             de_ctx->sgh_mpm_ctx_cnf = ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE;
         } else {
             de_ctx->sgh_mpm_ctx_cnf = ENGINE_SGH_MPM_FACTORY_CONTEXT_FULL;
@@ -3189,7 +3192,6 @@ static TmEcode ThreadCtxDoInit (DetectEngineCtx *de_ctx, DetectEngineThreadCtx *
     PatternMatchThreadPrepare(&det_ctx->mtc, de_ctx->mpm_matcher);
 
     PmqSetup(&det_ctx->pmq);
-
     det_ctx->spm_thread_ctx = SpmMakeThreadCtx(de_ctx->spm_global_thread_ctx);
     if (det_ctx->spm_thread_ctx == NULL) {
         return TM_ECODE_FAILED;

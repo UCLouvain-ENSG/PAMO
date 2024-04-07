@@ -82,6 +82,13 @@ ThreadVars *tv_root[TVT_MAX] = { NULL };
 /* lock to protect tv_root */
 SCMutex tv_root_lock = SCMUTEX_INITIALIZER;
 
+thread_local int thread_id = -1;
+int thread_num = 0;
+
+static inline void ThreadInitId() {
+    thread_id = atomic_fetch_add(&thread_num, 1);
+    SCLogNotice("Thread index %d", thread_id);
+}
 /**
  * \brief Check if a thread flag is set.
  *
@@ -247,6 +254,8 @@ static void *TmThreadsSlotPktAcqLoop(void *td)
     CaptureStatsSetup(tv);
     PacketPoolInit();
 
+    ThreadInitId();
+
     /* check if we are setup properly */
     if (s == NULL || s->PktAcqLoop == NULL || tv->tmqh_in == NULL || tv->tmqh_out == NULL) {
         SCLogError("TmSlot or ThreadVars badly setup: s=%p,"
@@ -376,6 +385,7 @@ static void *TmThreadsSlotVar(void *td)
 
     CaptureStatsSetup(tv);
     PacketPoolInit();//Empty();
+    ThreadInitId();
 
     SCSetThreadName(tv->name);
 
@@ -536,6 +546,8 @@ static void *TmThreadsManagement(void *td)
 
     /* Drop the capabilities for this thread */
     SCDropCaps(tv);
+
+    ThreadInitId();
 
     SCLogDebug("%s starting", tv->name);
 

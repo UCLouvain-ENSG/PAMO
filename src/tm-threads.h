@@ -82,6 +82,8 @@ extern ThreadVars *tv_root[TVT_MAX];
 
 extern SCMutex tv_root_lock;
 
+extern thread_local int thread_id;
+
 void TmSlotSetFuncAppend(ThreadVars *, TmModule *, const void *);
 
 ThreadVars *TmThreadCreate(const char *, const char *, const char *, const char *, const char *, const char *,

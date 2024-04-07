@@ -22,6 +22,10 @@
 #include "util-profiling.h"
 #include "util-validate.h"
 #include "action-globals.h"
+#include "detect-engine-alert.h"
+
+#include <rte_regexdev.h>
+#include "util-mpm-rxp.h"
 
 /** \brief issue drop action
  *
@@ -65,10 +69,19 @@ void PacketInit(Packet *p)
     p->alerts.alerts = PacketAlertCreate();
     PACKET_RESET_CHECKSUMS(p);
     p->livedev = NULL;
+    p->rxp.async_in_progress = false;
+    p->rxp.rxp_results = false;
+    p->rxp.inq = -1;
+    p->stream_data.jobs_inprogress = 0;
+    PmqSetup(&p->stream_data.pmq);
 }
 
 void PacketReleaseRefs(Packet *p)
 {
+    if (p->rxp.async_in_progress) {
+        /* we're in the middle of an async operation, we can't free the packet */
+        return;
+    }
     FlowDeReference(&p->flow);
     HostDeReference(&p->host_src);
     HostDeReference(&p->host_dst);
@@ -79,6 +92,7 @@ void PacketReleaseRefs(Packet *p)
  */
 void PacketReinit(Packet *p)
 {
+    BUG_ON(p->rxp.async_in_progress);
 /* clear the address structure by setting all fields to 0 */
 #define CLEAR_ADDR(a)                                                                              \
     do {                                                                                           \
@@ -165,6 +179,12 @@ void PacketReinit(Packet *p)
     PACKET_PROFILING_RESET(p);
     p->tenant_id = 0;
     p->nb_decoded_layers = 0;
+
+    p->rxp.async_in_progress = false;
+    p->rxp.rxp_results = false;
+    p->rxp.inq = -1;
+    p->stream_data.jobs_inprogress = 0;
+    PMQ_RESET(&p->stream_data.pmq);
 }
 
 void PacketRecycle(Packet *p)
@@ -183,6 +203,7 @@ void PacketDestructor(Packet *p)
         PktVarFree(p->pktvar);
     }
     PacketAlertFree(p->alerts.alerts);
+    p->alerts.alerts = NULL;
     PACKET_FREE_EXTDATA(p);
     SCSpinDestroy(&p->persistent.tunnel_lock);
     AppLayerDecoderEventsFreeEvents(&p->app_layer_events);

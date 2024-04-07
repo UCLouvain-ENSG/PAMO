@@ -64,6 +64,8 @@ static TmEcode RespondRejectThreadDeinit(ThreadVars *tv, void *data)
 
 static TmEcode RespondRejectFunc(ThreadVars *tv, Packet *p, void *data)
 {
+    if (p->rxp.rxp_results)
+        SCReturnInt(TM_ECODE_OK);
     /* ACTION_REJECT defaults to rejecting the SRC */
     if (likely(PacketCheckAction(p, ACTION_REJECT_ANY) == 0)) {
         return TM_ECODE_OK;

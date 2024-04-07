@@ -351,7 +351,7 @@ int DecodeICMPV4(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, const uint8_t
     p->payload = (uint8_t *)pkt + p->icmpv4vars.hlen;
     DEBUG_VALIDATE_BUG_ON(len - p->icmpv4vars.hlen > UINT16_MAX);
     p->payload_len = (uint16_t)(len - p->icmpv4vars.hlen);
-
+    rte_prefetch0(ICMPV4_GET_EMB_IPV4(p));
     FlowSetupPacket(p);
     return TM_ECODE_OK;
 }

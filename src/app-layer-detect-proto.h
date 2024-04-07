@@ -49,7 +49,7 @@ typedef AppProto (*ProbingParserFPtr)(
  * \retval The app layer protocol.
  */
 AppProto AppLayerProtoDetectGetProto(AppLayerProtoDetectThreadCtx *tctx, Flow *f,
-        const uint8_t *buf, uint32_t buflen, uint8_t ipproto, uint8_t flags, bool *reverse_flow);
+        const uint8_t *buf, uint32_t buflen, uint8_t ipproto, uint8_t flags, bool *reverse_flow, Packet *p_notused);
 
 /***** State Preparation *****/
 

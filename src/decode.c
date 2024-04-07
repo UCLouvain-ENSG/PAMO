@@ -133,6 +133,11 @@ static int DecodeTunnel(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, const 
  */
 void PacketFree(Packet *p)
 {
+    if (p->rxp.async_in_progress) {
+        /* we're in the middle of an async operation, we can't free the packet */
+        return;
+    }
+    
     PacketDestructor(p);
     SCFree(p);
 }
@@ -190,6 +195,11 @@ Packet *PacketGetFromAlloc(void)
  */
 void PacketFreeOrRelease(Packet *p)
 {
+    if (p->rxp.async_in_progress) {
+        /* we're in the middle of an async operation, we can't free the packet */
+        return;
+    }
+
     if (likely(p->pool != NULL)) {
         p->ReleasePacket = PacketPoolReturnPacket;
         PacketPoolReturnPacket(p);

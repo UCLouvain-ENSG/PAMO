@@ -302,8 +302,6 @@ typedef struct DetectPort_ {
 // vacancy 2x
 #define SIG_MASK_REQUIRE_ENGINE_EVENT       BIT_U8(7)
 
-/* for now a uint8_t is enough */
-#define SignatureMask uint8_t
 
 #define DETECT_ENGINE_THREAD_CTX_FRAME_ID_SET         0x0001
 #define DETECT_ENGINE_THREAD_CTX_STREAM_CONTENT_MATCH 0x0004
@@ -1547,6 +1545,9 @@ typedef struct DetectEngineMasterCtx_ {
     DetectEngineThreadKeywordCtxItem *keyword_list;
     int keyword_id;
 } DetectEngineMasterCtx;
+
+
+
 
 /* Table with all SigMatch registrations */
 extern SigTableElmt sigmatch_table[DETECT_TBLSIZE];

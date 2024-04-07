@@ -51,7 +51,7 @@ int DecodeEthernet(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
         return TM_ECODE_FAILED;
     }
 
-    if (!PacketIncreaseCheckLayers(p)) {
+    if (unlikely(!PacketIncreaseCheckLayers(p))) {
         return TM_ECODE_FAILED;
     }
     p->ethh = (EthernetHdr *)pkt;

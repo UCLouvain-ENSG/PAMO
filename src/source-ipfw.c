@@ -102,7 +102,7 @@ TmEcode NoIPFWSupportExit(ThreadVars *tv, const void *initdata, void **data)
 
 #include "action-globals.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 /**
  * \brief Structure to hold thread specific variables.

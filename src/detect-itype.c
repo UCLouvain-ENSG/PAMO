@@ -184,7 +184,7 @@ static void PrefilterPacketITypeMatch(DetectEngineThreadCtx *det_ctx,
     const PrefilterPacketU8HashCtx *h = pectx;
     const SigsArray *sa = h->array[pitype];
     if (sa) {
-        PrefilterAddSids(&det_ctx->pmq, sa->sigs, sa->cnt);
+        PrefilterAddSids(&p->stream_data.pmq, sa->sigs, sa->cnt);
     }
 }
 

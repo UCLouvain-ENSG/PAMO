@@ -48,6 +48,8 @@ typedef struct {
         (t).usecs = 0;                                                                             \
     }
 
+#define SCTIME_ZERO()  (SCTime_t){.secs = 0, .usecs = 0}
+
 #define SCTIME_INITIALIZER                                                                         \
     (SCTime_t)                                                                                     \
     {                                                                                              \
@@ -56,11 +58,16 @@ typedef struct {
 #define SCTIME_USECS(t)          ((uint64_t)(t).usecs)
 #define SCTIME_SECS(t)           ((uint64_t)(t).secs)
 #define SCTIME_MSECS(t)          (SCTIME_SECS(t) * 1000 + SCTIME_USECS(t) / 1000)
+
 #define SCTIME_ADD_USECS(ts, us)                                                                   \
     (SCTime_t)                                                                                     \
     {                                                                                              \
         .secs = (ts).secs + ((ts).usecs + (us)) / 1000000, .usecs = ((ts).usecs + (us)) % 1000000  \
     }
+
+#define SCTIME_TO_USECS(ts)                                                                   \
+    ((uint64_t)(ts).secs * 1000000 + (uint64_t)(ts).usecs)
+
 #define SCTIME_ADD_SECS(ts, s)                                                                     \
     (SCTime_t)                                                                                     \
     {                                                                                              \

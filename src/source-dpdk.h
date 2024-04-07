@@ -26,6 +26,8 @@
 
 #include "suricata-common.h"
 
+#define DPDK_MAX_THREADS 256 // set same value in util-device.h
+
 #ifdef HAVE_DPDK
 #include <rte_ethdev.h>
 #endif
@@ -39,10 +41,11 @@ typedef enum { DPDK_COPY_MODE_NONE, DPDK_COPY_MODE_TAP, DPDK_COPY_MODE_IPS } Dpd
 #define DPDK_PROMISC   (1 << 0) /**< Promiscuous mode */
 #define DPDK_MULTICAST (1 << 1) /**< Enable multicast packets */
 #define DPDK_IRQ_MODE  (1 << 2) /**< Interrupt mode */
+#define DPDK_RSSPP_ENABLE  (1 << 3) /**< Interrupt mode */
 // Offloads
 #define DPDK_RX_CHECKSUM_OFFLOAD (1 << 4) /**< Enable chsum offload */
 
-void DPDKSetTimevalOfMachineStart(void);
+void DPDKSetTimevalOfMachineStart(uint64_t);
 
 typedef struct DPDKWorkerSync_ {
     uint16_t worker_cnt;
@@ -72,7 +75,7 @@ typedef struct DPDKIfaceConfig_ {
     uint16_t nb_tx_desc;
     uint32_t mempool_size;
     uint32_t mempool_cache_size;
-    struct rte_mempool *pkt_mempool;
+    struct rte_mempool *pkt_mempool[DPDK_MAX_THREADS];
     SC_ATOMIC_DECLARE(unsigned int, ref);
     /* threads bind queue id one by one */
     SC_ATOMIC_DECLARE(uint16_t, queue_id);

@@ -134,6 +134,7 @@
 #include "util-macset.h"
 #include "util-misc.h"
 #include "util-mpm-hs.h"
+#include "util-mpm-rxp.h"
 #include "util-path.h"
 #include "util-pidfile.h"
 #include "util-plugin.h"
@@ -184,7 +185,7 @@ static enum EngineMode g_engine_mode = ENGINE_MODE_UNKNOWN;
 uint8_t host_mode = SURI_HOST_IS_SNIFFER_ONLY;
 
 /** Maximum packets to simultaneously process. */
-uint16_t max_pending_packets;
+uint32_t max_pending_packets;
 
 /** global indicating if detection is enabled */
 int g_detect_disabled = 0;
@@ -215,6 +216,11 @@ bool g_disable_hashing = false;
 
 /* snapshot of the system's hugepages before system intitialization. */
 SystemHugepageSnapshot *prerun_snap = NULL;
+
+int32_t g_rxp_minlength = 0;
+uint32_t g_rxp_desc = 0;
+uint32_t g_rxp_desc_max = 65536;
+uint32_t g_mpm_groups_cnt = 0;
 
 /** Suricata instance */
 SCInstance suricata;
@@ -394,9 +400,7 @@ void GlobalsDestroy(void)
     TmModuleRunDeInit();
     ParseSizeDeinit();
 
-#ifdef HAVE_DPDK
-    DPDKCleanupEAL();
-#endif
+    MpmRXPGlobalCleanup();
 
 #ifdef HAVE_AF_PACKET
     AFPPeersListClean();
@@ -422,6 +426,10 @@ void GlobalsDestroy(void)
 
     VarNameStoreDestroy();
     SCLogDeInitLogModule();
+
+#ifdef HAVE_DPDK
+    DPDKCleanupEAL();
+#endif
 }
 
 /**
@@ -2308,7 +2316,7 @@ void PostRunDeinit(const int runmode, struct timeval *start_time)
 
     TmqResetQueues();
 #ifdef PROFILING
-    if (profiling_rules_enabled)
+    if (profiling_packets_enabled)
         SCProfilingDump();
     SCProfilingDestroy();
 #endif
@@ -2434,16 +2442,16 @@ static int ConfigGetCaptureValue(SCInstance *suri)
     intmax_t tmp_max_pending_packets;
     if (ConfGetInt("max-pending-packets", &tmp_max_pending_packets) != 1)
         tmp_max_pending_packets = DEFAULT_MAX_PENDING_PACKETS;
-    if (tmp_max_pending_packets < 1 || tmp_max_pending_packets >= UINT16_MAX) {
-        SCLogError("Maximum max-pending-packets setting is 65534 and must be greater than 0. "
+    if (tmp_max_pending_packets < 1 || tmp_max_pending_packets >= UINT32_MAX) {
+        SCLogError("Maximum max-pending-packets setting is 2^32-11 and must be greater than 0. "
                    "Please check %s for errors",
                 suri->conf_filename);
         return TM_ECODE_FAILED;
     } else {
-        max_pending_packets = (uint16_t)tmp_max_pending_packets;
+        max_pending_packets = (uint32_t)tmp_max_pending_packets;
     }
 
-    SCLogDebug("Max pending packets set to %" PRIu16, max_pending_packets);
+    SCLogInfo("Max pending packets set to %" PRIu32, max_pending_packets);
 
     /* Pull the default packet size from the config, if not found fall
      * back on a sane default. */
@@ -2901,8 +2909,170 @@ void SuricataPreInit(const char *progname)
     }
 }
 
+/* Maximum DPDK EAL parameters count. */
+#define EAL_ARGS 48
+
+struct Arguments {
+    uint16_t capacity;
+    char **argv;
+    uint16_t argc;
+};
+
+static char *AllocArgument(size_t arg_len)
+{
+    SCEnter();
+    char *ptr;
+
+    arg_len += 1; // null character
+    ptr = (char *)SCCalloc(arg_len, sizeof(char));
+    if (ptr == NULL)
+        FatalError("Could not allocate memory for an argument");
+
+    SCReturnPtr(ptr, "char *");
+}
+
+/**
+ * Allocates space for length of the given string and then copies contents
+ * @param arg String to set to the newly allocated space
+ * @return memory address if no error otherwise NULL (with errno set)
+ */
+static char *AllocAndSetArgument(const char *arg)
+{
+    SCEnter();
+    if (arg == NULL)
+        FatalError("Passed argument is NULL in DPDK config initialization");
+
+    char *ptr;
+    size_t arg_len = strlen(arg);
+
+    ptr = AllocArgument(arg_len);
+    strlcpy(ptr, arg, arg_len + 1);
+    SCReturnPtr(ptr, "char *");
+}
+
+static char *AllocAndSetOption(const char *arg)
+{
+    SCEnter();
+    if (arg == NULL)
+        FatalError("Passed option is NULL in DPDK config initialization");
+
+    char *ptr = NULL;
+    size_t arg_len = strlen(arg);
+    uint8_t is_long_arg = arg_len > 1;
+    const char *dash_prefix = is_long_arg ? "--" : "-";
+    size_t full_len = arg_len + strlen(dash_prefix);
+
+    ptr = AllocArgument(full_len);
+    strlcpy(ptr, dash_prefix, strlen(dash_prefix) + 1);
+    strlcat(ptr, arg, full_len + 1);
+    SCReturnPtr(ptr, "char *");
+}
+
+static void ArgumentsInit(struct Arguments *args, unsigned capacity)
+{
+    SCEnter();
+    args->argv = SCCalloc(capacity, sizeof(*args->argv)); // alloc array of pointers
+    if (args->argv == NULL)
+        FatalError("Could not allocate memory for Arguments structure");
+
+    args->capacity = capacity;
+    args->argc = 0;
+    SCReturn;
+}
+
+static void ArgumentsCleanup(struct Arguments *args)
+{
+    SCEnter();
+    for (int i = 0; i < args->argc; i++) {
+        if (args->argv[i] != NULL) {
+            SCFree(args->argv[i]);
+            args->argv[i] = NULL;
+        }
+    }
+
+    SCFree(args->argv);
+    args->argv = NULL;
+    args->argc = 0;
+    args->capacity = 0;
+}
+
+static void ArgumentsAdd(struct Arguments *args, char *value)
+{
+    SCEnter();
+    if (args->argc + 1 > args->capacity)
+        FatalError("No capacity for more arguments (Max: %" PRIu32 ")", EAL_ARGS);
+
+    args->argv[args->argc++] = value;
+    SCReturn;
+}
+
+static void ArgumentsAddOptionAndArgument(struct Arguments *args, const char *opt, const char *arg)
+{
+    SCEnter();
+    char *option;
+    char *argument;
+
+    option = AllocAndSetOption(opt);
+    ArgumentsAdd(args, option);
+
+    // Empty argument could mean option only (e.g. --no-huge)
+    if (arg == NULL || arg[0] == '\0')
+        SCReturn;
+
+    argument = AllocAndSetArgument(arg);
+    ArgumentsAdd(args, argument);
+    SCReturn;
+}
+
+static void InitEal(void)
+{
+    SCEnter();
+    int retval;
+    ConfNode *param;
+    const ConfNode *eal_params = ConfGetNode("dpdk.eal-params");
+    struct Arguments args;
+    char **eal_argv;
+
+    if (eal_params == NULL) {
+        FatalError("DPDK EAL parameters not found in the config");
+    }
+
+    ArgumentsInit(&args, EAL_ARGS);
+    ArgumentsAdd(&args, AllocAndSetArgument("suricata"));
+
+    TAILQ_FOREACH (param, &eal_params->head, next) {
+        if (ConfNodeIsSequence(param)) {
+            const char *key = param->name;
+            ConfNode *val;
+            TAILQ_FOREACH (val, &param->head, next) {
+                ArgumentsAddOptionAndArgument(&args, key, (const char *)val->val);
+            }
+            continue;
+        }
+        ArgumentsAddOptionAndArgument(&args, param->name, param->val);
+    }
+
+    // creating a shallow copy for cleanup because rte_eal_init changes array contents
+    eal_argv = SCCalloc(args.argc, sizeof(*args.argv));
+    if (eal_argv == NULL) {
+        FatalError("Failed to allocate memory for the array of DPDK EAL arguments");
+    }
+    memcpy(eal_argv, args.argv, args.argc * sizeof(*args.argv));
+
+    rte_log_set_global_level(RTE_LOG_WARNING);
+    retval = rte_eal_init(args.argc, eal_argv);
+
+    ArgumentsCleanup(&args);
+    SCFree(eal_argv);
+
+    if (retval < 0) { // retval bound to the result of rte_eal_init
+        FatalError("DPDK EAL initialization error: %s", rte_strerror(-retval));
+    }
+}
+
 void SuricataInit(void)
 {
+    InitEal();
     /* Initializations for global vars, queues, etc (memsets, mutex init..) */
     GlobalsInitPreConfig();
 
@@ -2965,6 +3135,11 @@ void SuricataInit(void)
     } else if (suricata.run_mode == RUNMODE_DUMP_FEATURES) {
         FeatureDump();
         goto out;
+    }
+
+    if (mpm_chosen_matcher == MPM_RXP) {
+        RXPCompileRules(suricata.sig_file);
+        RXPInit();
     }
 
     if (run_mode == RUNMODE_DPDK)

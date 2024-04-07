@@ -98,6 +98,7 @@ enum PktSrcEnum {
 #include "decode-vlan.h"
 #include "decode-mpls.h"
 
+#include "util-prefilter.h"
 
 /* forward declarations */
 struct DetectionEngineThreadCtx_;
@@ -416,6 +417,33 @@ enum PacketTunnelType {
 /* forward declaration since Packet struct definition requires this */
 struct PacketQueue_;
 
+/* not using the enum as that is a unsigned int, so 4 bytes */
+typedef uint16_t AppProto;
+
+/* for now a uint8_t is enough */
+#define SignatureMask uint8_t
+
+typedef struct SigGroupHead_ SigGroupHead;
+
+typedef struct DetectRunScratchpad {
+    AppProto alproto;
+    uint8_t flow_flags; /* flow/state flags: STREAM_* */
+    bool app_decoder_events;
+    const SigGroupHead *sgh;
+    SignatureMask pkt_mask;
+} DetectRunScratchpad;
+
+typedef struct RXPData_ {
+    bool async_in_progress; // global state for the packet, signals that at least part of it got asynced
+    // when packet data were asynced, and we received all results - 
+    // if true, we are skipping payload prefilter in the detection, 
+    // but will do other parts of the detection
+    bool rxp_results; 
+    int inq;
+    DetectRunScratchpad scratch; // scratchpad for the detection run, to avoid re-initializing it multiple times
+    uint64_t raw_stream_progress; // saved det_ctx->raw_stream_progress when we async the packet, to restore it later
+} RXPData;
+
 /* sizes of the members:
  * src: 17 bytes
  * dst: 17 bytes
@@ -482,7 +510,9 @@ typedef struct Packet_
     enum PacketTunnelType ttype;
 
     SCTime_t ts;
-
+    #ifdef PROFILING
+    uint64_t ts_cycles;
+    #endif
     union {
         /* nfq stuff */
 #ifdef HAVE_NFLOG
@@ -597,9 +627,14 @@ typedef struct Packet_
 
     /* Incoming interface */
     struct LiveDevice_ *livedev;
-
+    
+    RXPData rxp;
+    struct {
+        PrefilterRuleStore pmq; // PrefilterRuleStore
+        // for stream only
+        uint32_t jobs_inprogress;
+    } stream_data;
     PacketAlerts alerts;
-
     struct Host_ *host_src;
     struct Host_ *host_dst;
 
@@ -1079,7 +1114,7 @@ extern uint8_t decoder_max_layers;
 static inline bool PacketIncreaseCheckLayers(Packet *p)
 {
     p->nb_decoded_layers++;
-    if (p->nb_decoded_layers >= decoder_max_layers) {
+    if (unlikely(p->nb_decoded_layers >= decoder_max_layers)) {
         ENGINE_SET_INVALID_EVENT(p, GENERIC_TOO_MANY_LAYERS);
         return false;
     }

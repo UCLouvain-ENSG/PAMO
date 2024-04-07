@@ -104,6 +104,11 @@ enum EngineMode {
     ENGINE_MODE_IPS,
 };
 
+extern uint32_t g_mpm_groups_cnt;
+extern uint32_t g_rxp_desc;
+extern uint32_t g_rxp_desc_max;
+extern int32_t g_rxp_minlength;
+
 void EngineModeSetIPS(void);
 void EngineModeSetIDS(void);
 int EngineModeIsUnknown(void);

@@ -121,6 +121,8 @@ void DPDKCleanupEAL(void);
 
 void DPDKCloseDevice(LiveDevice *ldev);
 void DPDKFreeDevice(LiveDevice *ldev);
+void DPDKInitBalancer(void);
+void DPDKLoadBalance(void);
 
 #ifdef HAVE_DPDK
 const char *DPDKGetPortNameByPortID(uint16_t pid);

@@ -252,7 +252,7 @@ struct StreamLogData {
 };
 
 static int StreamLogFunc(
-        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset)
+        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset, Packet *p)
 {
     struct StreamLogData *log = cb_data;
 

@@ -235,7 +235,7 @@ PrefilterPacketIdMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const void *pe
     if (IPV4_GET_IPID(p) == ctx->v1.u16[0])
     {
         SCLogDebug("packet matches IP id %u", ctx->v1.u16[0]);
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq,     ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

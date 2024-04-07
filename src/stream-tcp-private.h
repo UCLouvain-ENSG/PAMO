@@ -144,6 +144,13 @@ typedef struct TcpStream_ {
 #define STREAM_BASE_OFFSET(stream)  ((stream)->sb.region.stream_offset)
 #define STREAM_APP_PROGRESS(stream) (STREAM_BASE_OFFSET((stream)) + (stream)->app_progress_rel)
 #define STREAM_RAW_PROGRESS(stream) (STREAM_BASE_OFFSET((stream)) + (stream)->raw_progress_rel)
+#define STREAM_RAW_PROGRESS_PKT(stream, p) \
+    ({ \
+        uint64_t progress = ((p) != NULL && (p)->rxp.rxp_results && (p)->rxp.raw_stream_progress != 0) \
+            ? (p)->rxp.raw_stream_progress \
+            : STREAM_RAW_PROGRESS(stream); \
+        (progress == UINT64_MAX) ? 0 : progress; \
+    })
 #define STREAM_LOG_PROGRESS(stream) (STREAM_BASE_OFFSET((stream)) + (stream)->log_progress_rel)
 
 /* from /usr/include/netinet/tcp.h */

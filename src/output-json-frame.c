@@ -132,7 +132,7 @@ struct FrameJsonStreamDataCallbackData {
 };
 
 static int FrameJsonStreamDataCallback(
-        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset)
+        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset, Packet *p)
 {
     struct FrameJsonStreamDataCallbackData *cbd = cb_data;
     const Frame *frame = cbd->frame;

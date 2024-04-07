@@ -189,7 +189,7 @@ static void PrefilterPacketStreamsizeMatch(
     /* if we match, add all the sigs that use this prefilter. This means
      * that these will be inspected further */
     if (DetectStreamSizeMatchAux(&dsd, ssn)) {
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

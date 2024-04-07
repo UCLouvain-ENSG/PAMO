@@ -93,7 +93,7 @@ int SCACTileAddPatternCS(MpmCtx *, uint8_t *, uint16_t, uint16_t, uint16_t,
 int SCACTilePreparePatterns(MpmCtx *mpm_ctx);
 uint32_t SCACTileSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
                         PrefilterRuleStore *pmq, const uint8_t *buf,
-                        uint32_t buflen);
+                        uint32_t buflen, Packet *p);
 void SCACTilePrintInfo(MpmCtx *mpm_ctx);
 #ifdef UNITTESTS
 static void SCACTileRegisterTests(void);
@@ -1170,7 +1170,7 @@ static int CheckMatch(const SCACTileSearchCtx *ctx, PrefilterRuleStore *pmq,
  * \retval matches Match count.
  */
 uint32_t SCACTileSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
-                        PrefilterRuleStore *pmq, const uint8_t *buf, uint32_t buflen)
+                        PrefilterRuleStore *pmq, const uint8_t *buf, uint32_t buflen, Packet *p)
 {
     const SCACTileSearchCtx *search_ctx = (SCACTileSearchCtx *)mpm_ctx->ctx;
 
@@ -1437,7 +1437,7 @@ static int SCACTileTest01(void)
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
 
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1468,7 +1468,7 @@ static int SCACTileTest02(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1503,7 +1503,7 @@ static int SCACTileTest03(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1535,7 +1535,7 @@ static int SCACTileTest04(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1567,7 +1567,7 @@ static int SCACTileTest05(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1597,7 +1597,7 @@ static int SCACTileTest06(void)
 
     const char *buf = "abcd";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1639,7 +1639,7 @@ static int SCACTileTest07(void)
 
     const char *buf = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
     FAIL_IF_NOT(cnt == 6);
 
     SCACTileDestroyCtx(&mpm_ctx);
@@ -1665,7 +1665,7 @@ static int SCACTileTest08(void)
     SCACTilePreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)"a", 1);
+                                  (uint8_t *)"a", 1, NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1695,7 +1695,7 @@ static int SCACTileTest09(void)
     SCACTilePreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)"ab", 2);
+                                  (uint8_t *)"ab", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1730,7 +1730,7 @@ static int SCACTileTest10(void)
                 "01234567890123456789012345678901234567890123456789"
                 "01234567890123456789012345678901234567890123456789";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1770,16 +1770,16 @@ static int SCACTileTest11(void)
 
     const char *buf = "he";
     result &= (SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf)) == 1);
+                              strlen(buf)) == 1, NULL);
     buf = "she";
     result &= (SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf)) == 2);
+                              strlen(buf)) == 2, NULL);
     buf = "his";
     result &= (SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf)) == 1);
+                              strlen(buf)) == 1, NULL);
     buf = "hers";
     result &= (SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf)) == 2);
+                              strlen(buf)) == 2, NULL);
 
  end:
      SCACTileDestroyCtx(&mpm_ctx);
@@ -1808,7 +1808,7 @@ static int SCACTileTest12(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyz";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 2)
         result = 1;
@@ -1840,7 +1840,7 @@ static int SCACTileTest13(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCD";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1872,7 +1872,7 @@ static int SCACTileTest14(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCDE";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1904,7 +1904,7 @@ static int SCACTileTest15(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCDEF";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1936,7 +1936,7 @@ static int SCACTileTest16(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABC";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1968,7 +1968,7 @@ static int SCACTileTest17(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzAB";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2005,7 +2005,7 @@ static int SCACTileTest18(void)
 
     const char *buf = "abcde""fghij""klmno""pqrst""uvwxy""z";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2037,7 +2037,7 @@ static int SCACTileTest19(void)
 
     const char *buf = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2075,7 +2075,7 @@ static int SCACTileTest20(void)
 
     const char *buf = "AAAAA""AAAAA""AAAAA""AAAAA""AAAAA""AAAAA""AA";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2105,7 +2105,7 @@ static int SCACTileTest21(void)
     SCACTilePreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)"AA", 2);
+                                  (uint8_t *)"AA", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2138,7 +2138,7 @@ static int SCACTileTest22(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyz";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 2)
         result = 1;
@@ -2168,7 +2168,7 @@ static int SCACTileTest23(void)
     SCACTilePreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)"aa", 2);
+                                  (uint8_t *)"aa", 2, NULL);
 
     if (cnt == 0)
         result = 1;
@@ -2198,7 +2198,7 @@ static int SCACTileTest24(void)
     SCACTilePreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)"aa", 2);
+                                  (uint8_t *)"aa", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2230,7 +2230,7 @@ static int SCACTileTest25(void)
 
     const char *buf = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -2261,7 +2261,7 @@ static int SCACTileTest26(void)
 
     const char *buf = "works";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2292,7 +2292,7 @@ static int SCACTileTest27(void)
 
     const char *buf = "tone";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;
@@ -2323,7 +2323,7 @@ static int SCACTileTest28(void)
 
     const char *buf = "tONE";
     uint32_t cnt = SCACTileSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                                  (uint8_t *)buf, strlen(buf));
+                                  (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;

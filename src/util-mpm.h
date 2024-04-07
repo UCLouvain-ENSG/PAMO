@@ -26,6 +26,7 @@
 
 #include "app-layer-protos.h"
 #include "util-prefilter.h"
+#include "decode.h"
 
 #define MPM_INIT_HASH_SIZE 65536
 
@@ -36,6 +37,7 @@ enum {
     MPM_AC,
     MPM_AC_KS,
     MPM_HS,
+    MPM_RXP,
     /* table size */
     MPM_TABLE_SIZE,
 };
@@ -165,7 +167,7 @@ typedef struct MpmTableElmt_ {
     int  (*AddPatternNocase)(struct MpmCtx_ *, uint8_t *, uint16_t, uint16_t, uint16_t, uint32_t, SigIntId, uint8_t);
     int  (*Prepare)(struct MpmCtx_ *);
     /** \retval cnt number of patterns that matches: once per pattern max. */
-    uint32_t (*Search)(const struct MpmCtx_ *, struct MpmThreadCtx_ *, PrefilterRuleStore *, const uint8_t *, uint32_t);
+    uint32_t (*Search)(const struct MpmCtx_ *, struct MpmThreadCtx_ *, PrefilterRuleStore *, const uint8_t *, uint32_t, Packet *);
     void (*PrintCtx)(struct MpmCtx_ *);
     void (*PrintThreadCtx)(struct MpmThreadCtx_ *);
 #ifdef UNITTESTS
@@ -176,6 +178,9 @@ typedef struct MpmTableElmt_ {
 
 extern MpmTableElmt mpm_table[MPM_TABLE_SIZE];
 extern uint8_t mpm_default_matcher;
+extern uint8_t mpm_chosen_matcher;
+extern uint32_t mpm_ctx_glob_id_cnt;
+extern uint32_t mpm_ctx_glob_patterns_cnt;
 
 struct DetectEngineCtx_;
 

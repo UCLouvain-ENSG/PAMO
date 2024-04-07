@@ -68,7 +68,7 @@ static void PrefilterPacketFlowAgeMatch(
     du32.arg1 = ctx->v1.u32[1];
     du32.arg2 = ctx->v1.u32[2];
     if (DetectFlowAgeMatch(det_ctx, p, NULL, (const SigMatchCtx *)&du32)) {
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

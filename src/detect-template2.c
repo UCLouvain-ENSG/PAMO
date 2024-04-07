@@ -166,7 +166,7 @@ PrefilterPacketTemplate2Match(DetectEngineThreadCtx *det_ctx, Packet *p, const v
      * that these will be inspected further */
     if (DetectU8Match(ptemplate2, &du8)) {
         SCLogDebug("packet matches template2/hl %u", ptemplate2);
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

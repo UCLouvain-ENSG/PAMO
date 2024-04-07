@@ -70,7 +70,7 @@ int SCACAddPatternCS(MpmCtx *, uint8_t *, uint16_t, uint16_t, uint16_t,
                      uint32_t, SigIntId, uint8_t);
 int SCACPreparePatterns(MpmCtx *mpm_ctx);
 uint32_t SCACSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
-                    PrefilterRuleStore *pmq, const uint8_t *buf, uint32_t buflen);
+                    PrefilterRuleStore *pmq, const uint8_t *buf, uint32_t buflen, Packet *p);
 void SCACPrintInfo(MpmCtx *mpm_ctx);
 #ifdef UNITTESTS
 static void SCACRegisterTests(void);
@@ -938,7 +938,7 @@ void SCACDestroyCtx(MpmCtx *mpm_ctx)
  * \retval matches Match count: counts unique matches per pattern.
  */
 uint32_t SCACSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
-                    PrefilterRuleStore *pmq, const uint8_t *buf, uint32_t buflen)
+                    PrefilterRuleStore *pmq, const uint8_t *buf, uint32_t buflen, Packet *p)
 {
     const SCACCtx *ctx = (SCACCtx *)mpm_ctx->ctx;
     int matches = 0;
@@ -1166,7 +1166,7 @@ static int SCACTest01(void)
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
 
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1197,7 +1197,7 @@ static int SCACTest02(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1232,7 +1232,7 @@ static int SCACTest03(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1264,7 +1264,7 @@ static int SCACTest04(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1296,7 +1296,7 @@ static int SCACTest05(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1326,7 +1326,7 @@ static int SCACTest06(void)
 
     const char *buf = "abcd";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1368,7 +1368,7 @@ static int SCACTest07(void)
 
     const char *buf = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
     FAIL_IF_NOT(cnt == 6);
 
     SCACDestroyCtx(&mpm_ctx);
@@ -1394,7 +1394,7 @@ static int SCACTest08(void)
     SCACPreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)"a", 1);
+                               (uint8_t *)"a", 1, NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1424,7 +1424,7 @@ static int SCACTest09(void)
     SCACPreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)"ab", 2);
+                               (uint8_t *)"ab", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1459,7 +1459,7 @@ static int SCACTest10(void)
                 "01234567890123456789012345678901234567890123456789"
                 "01234567890123456789012345678901234567890123456789";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1499,16 +1499,16 @@ static int SCACTest11(void)
 
     const char *buf = "he";
     result &= (SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 1);
+                          strlen(buf)) == 1, NULL);
     buf = "she";
     result &= (SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 2);
+                          strlen(buf)) == 2, NULL);
     buf = "his";
     result &= (SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 1);
+                          strlen(buf)) == 1, NULL);
     buf = "hers";
     result &= (SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 2);
+                          strlen(buf)) == 2, NULL);
 
  end:
      SCACDestroyCtx(&mpm_ctx);
@@ -1537,7 +1537,7 @@ static int SCACTest12(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyz";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 2)
         result = 1;
@@ -1569,7 +1569,7 @@ static int SCACTest13(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCD";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1601,7 +1601,7 @@ static int SCACTest14(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCDE";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1633,7 +1633,7 @@ static int SCACTest15(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCDEF";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1665,7 +1665,7 @@ static int SCACTest16(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABC";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1697,7 +1697,7 @@ static int SCACTest17(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzAB";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1734,7 +1734,7 @@ static int SCACTest18(void)
 
     const char *buf = "abcde""fghij""klmno""pqrst""uvwxy""z";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1766,7 +1766,7 @@ static int SCACTest19(void)
 
     const char *buf = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1804,7 +1804,7 @@ static int SCACTest20(void)
 
     const char *buf = "AAAAA""AAAAA""AAAAA""AAAAA""AAAAA""AAAAA""AA";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1834,7 +1834,7 @@ static int SCACTest21(void)
     SCACPreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                              (uint8_t *)"AA", 2);
+                              (uint8_t *)"AA", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1867,7 +1867,7 @@ static int SCACTest22(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyz";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                              (uint8_t *)buf, strlen(buf));
+                              (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 2)
         result = 1;
@@ -1897,7 +1897,7 @@ static int SCACTest23(void)
     SCACPreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                              (uint8_t *)"aa", 2);
+                              (uint8_t *)"aa", 2, NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1927,7 +1927,7 @@ static int SCACTest24(void)
     SCACPreparePatterns(&mpm_ctx);
 
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                              (uint8_t *)"aa", 2);
+                              (uint8_t *)"aa", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1959,7 +1959,7 @@ static int SCACTest25(void)
 
     const char *buf = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1990,7 +1990,7 @@ static int SCACTest26(void)
 
     const char *buf = "works";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2021,7 +2021,7 @@ static int SCACTest27(void)
 
     const char *buf = "tone";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;
@@ -2051,7 +2051,7 @@ static int SCACTest28(void)
 
     const char *buf = "tONE";
     uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq,
-                               (uint8_t *)buf, strlen(buf));
+                               (uint8_t *)buf, strlen(buf), NULL);
     FAIL_IF_NOT(cnt == 0);
 
     SCACDestroyCtx(&mpm_ctx);
@@ -2117,10 +2117,10 @@ static int SCACTest30(void)
     SCACPreparePatterns(&mpm_ctx);
 
     const char *buf1 = "abcdefghijklmnopqrstuvwxyz";
-    uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf1, strlen(buf1));
+    uint32_t cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf1, strlen(buf1), NULL);
     FAIL_IF_NOT(cnt == 1);
     const char *buf2 = "xyzxyzxyzxyzxyzxyzxyza";
-    cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf2, strlen(buf2));
+    cnt = SCACSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf2, strlen(buf2), NULL);
     FAIL_IF_NOT(cnt == 0);
 
     SCACDestroyCtx(&mpm_ctx);

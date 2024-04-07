@@ -59,7 +59,7 @@
 #include "source-af-packet.h"
 #include "util-bpf.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 const char *RunModeAFPGetDefaultMode(void)
 {

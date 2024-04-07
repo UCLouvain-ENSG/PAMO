@@ -31,6 +31,7 @@
 #include "util-mpm-ac.h"
 #include "util-mpm-ac-ks.h"
 #include "util-mpm-hs.h"
+#include "util-mpm-rxp.h"
 #include "util-hashlist.h"
 
 #include "detect-engine.h"
@@ -46,6 +47,9 @@
 
 MpmTableElmt mpm_table[MPM_TABLE_SIZE];
 uint8_t mpm_default_matcher;
+uint8_t mpm_chosen_matcher;
+uint32_t mpm_ctx_glob_id_cnt = 1;
+uint32_t mpm_ctx_glob_patterns_cnt = 1;
 
 /**
  * \brief Register a new Mpm Context.
@@ -211,6 +215,7 @@ void MpmInitCtx(MpmCtx *mpm_ctx, uint8_t matcher)
 {
     mpm_ctx->mpm_type = matcher;
     mpm_table[matcher].InitCtx(mpm_ctx);
+    mpm_chosen_matcher = matcher;
 }
 
 /* MPM matcher to use by default, i.e. when "mpm-algo" is set to "auto".
@@ -245,6 +250,7 @@ void MpmTableSetup(void)
         MpmHSRegister();
     #endif /* HAVE_HS_VALID_PLATFORM */
 #endif /* BUILD_HYPERSCAN */
+    MpmRXPRegister();
 }
 
 int MpmAddPatternCS(struct MpmCtx_ *mpm_ctx, uint8_t *pat, uint16_t patlen,

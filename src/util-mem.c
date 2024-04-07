@@ -19,6 +19,8 @@
 #include "suricata.h"
 #include "util-atomic.h"
 #include "util-debug.h"
+#include <stdlib.h>
+#include <rte_malloc.h>
 
 #if defined(_WIN32) || defined(__WIN32)
 #include <mm_malloc.h>
