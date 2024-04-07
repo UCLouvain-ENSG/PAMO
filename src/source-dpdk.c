@@ -42,6 +42,7 @@
 #include "tmqh-packetpool.h"
 #include "util-privs.h"
 #include "action-globals.h"
+#include "flow-hash.h"
 
 #ifndef HAVE_DPDK
 
@@ -90,6 +91,8 @@ TmEcode NoDPDKSupportExit(ThreadVars *tv, const void *initdata, void **data)
 #include "util-dpdk-i40e.h"
 #include "util-dpdk-bonding.h"
 #include <numa.h>
+#include "util-mpm-rxp.h"
+#include <rte_regexdev.h>
 
 #define BURST_SIZE 32
 static struct timeval machine_start_time = { 0, 0 };
@@ -100,6 +103,25 @@ static struct timeval machine_start_time = { 0, 0 };
 #define STANDARD_SLEEP_TIME_US       100U
 #define MAX_EPOLL_TIMEOUT_MS         500U
 static rte_spinlock_t intr_lock[RTE_MAX_ETHPORTS];
+
+#ifdef PROFILING
+thread_local uint64_t pkt_hs_pipeline_cnt = 0;
+thread_local uint64_t pkt_hs_pipeline_us_ttl = 0;
+thread_local uint64_t pkt_hs_pipeline_us_min = UINT64_MAX;
+thread_local uint64_t pkt_hs_pipeline_us_max = 0;
+thread_local uint64_t pkt_hs_pipeline_cycles_ttl = 0;
+thread_local uint64_t pkt_hs_pipeline_cycles_min = UINT64_MAX;
+thread_local uint64_t pkt_hs_pipeline_cycles_max = 0;
+
+thread_local uint64_t pkt_rxp_pipeline_cnt = 0;
+thread_local uint64_t pkt_rxp_pipeline_us_ttl = 0;
+thread_local uint64_t pkt_rxp_pipeline_us_min = UINT64_MAX;
+thread_local uint64_t pkt_rxp_pipeline_us_max = 0;
+thread_local uint64_t pkt_rxp_pipeline_cycles_ttl = 0;
+thread_local uint64_t pkt_rxp_pipeline_cycles_min = UINT64_MAX;
+thread_local uint64_t pkt_rxp_pipeline_cycles_max = 0;
+#endif
+
 
 /**
  * \brief Structure to hold thread specific variables.
@@ -112,8 +134,10 @@ typedef struct DPDKThreadVars_ {
     LiveDevice *livedev;
     ChecksumValidationMode checksum_mode;
     bool intr_enabled;
+    bool rsspp_enabled;
     /* references to packet and drop counters */
     uint16_t capture_dpdk_packets;
+    uint16_t capture_dpdk_bytes;
     uint16_t capture_dpdk_rx_errs;
     uint16_t capture_dpdk_imissed;
     uint16_t capture_dpdk_rx_no_mbufs;
@@ -135,7 +159,22 @@ typedef struct DPDKThreadVars_ {
     struct rte_mempool *pkt_mempool;
     struct rte_mbuf *received_mbufs[BURST_SIZE];
     DPDKWorkerSync *workers_sync;
+    uint64_t last_flush;
+    uint64_t zero_pkt_polls_cnt;
+    bool intimeout;
+    uint64_t last_timeout_usec;
+    uint64_t last_timeout_msec;
+    uint64_t running_time;
+    uint64_t sleeping_time;
+    uint64_t tsc_hz_per_us;
+    uint64_t tsc_hz_per_s;
+#if HAVE_RSSPP
+    uint64_t hash_count*;
+#endif
 } DPDKThreadVars;
+
+void PrintDPDKPortXstats(uint32_t port_id, const char *port_name);
+
 
 static TmEcode ReceiveDPDKThreadInit(ThreadVars *, const void *, void **);
 static void ReceiveDPDKThreadExitStats(ThreadVars *, void *);
@@ -146,10 +185,10 @@ static TmEcode DecodeDPDKThreadInit(ThreadVars *, const void *, void **);
 static TmEcode DecodeDPDKThreadDeinit(ThreadVars *tv, void *data);
 static TmEcode DecodeDPDK(ThreadVars *, Packet *, void *);
 
-static uint64_t CyclesToMicroseconds(uint64_t cycles);
-static uint64_t CyclesToSeconds(uint64_t cycles);
+static inline uint64_t CyclesToMicroseconds(uint64_t cycles, DPDKThreadVars* ptv);
+
 static void DPDKFreeMbufArray(struct rte_mbuf **mbuf_array, uint16_t mbuf_cnt, uint16_t offset);
-static uint64_t DPDKGetSeconds(void);
+static uint64_t DPDKGetSeconds(uint64_t);
 
 static bool InterruptsRXEnable(uint16_t port_id, uint16_t queue_id)
 {
@@ -193,36 +232,36 @@ static inline void DPDKFreeMbufArray(
     }
 }
 
-static uint64_t CyclesToMicroseconds(const uint64_t cycles)
+static inline uint64_t CyclesToMicroseconds(const uint64_t cycles,  DPDKThreadVars* ptv)
 {
-    const uint64_t ticks_per_us = rte_get_tsc_hz() / 1000000;
-    if (ticks_per_us == 0) {
-        return 0;
-    }
+
+    const uint64_t ticks_per_us = ptv->tsc_hz_per_us;
     return cycles / ticks_per_us;
 }
 
-static uint64_t CyclesToSeconds(const uint64_t cycles)
+
+
+/**
+ * divide by 1M, with a precision higher than a day (86400)
+ */
+static uint64_t div_by_1M(uint64_t val)
 {
-    const uint64_t ticks_per_s = rte_get_tsc_hz();
-    if (ticks_per_s == 0) {
-        return 0;
-    }
-    return cycles / ticks_per_s;
+    return (uint64_t)(val * 4295 >> 32);
 }
 
-static void CyclesAddToTimeval(
-        const uint64_t cycles, struct timeval *orig_tv, struct timeval *new_tv)
+static inline void CyclesAddToTimeval(
+        const uint64_t cycles, struct timeval *orig_tv, struct timeval *new_tv, DPDKThreadVars *ptv)
 {
-    uint64_t usec = CyclesToMicroseconds(cycles) + orig_tv->tv_usec;
+    uint64_t usec = CyclesToMicroseconds(cycles, ptv) + orig_tv->tv_usec;
     new_tv->tv_sec = orig_tv->tv_sec + usec / 1000000;
     new_tv->tv_usec = (usec % 1000000);
 }
 
-void DPDKSetTimevalOfMachineStart(void)
+void DPDKSetTimevalOfMachineStart(uint64_t tsc_hz_per_s)
 {
+    SCLogNotice("DPDK: machine start time set");
     gettimeofday(&machine_start_time, NULL);
-    machine_start_time.tv_sec -= DPDKGetSeconds();
+    machine_start_time.tv_sec -= DPDKGetSeconds(tsc_hz_per_s);
 }
 
 /**
@@ -231,17 +270,18 @@ void DPDKSetTimevalOfMachineStart(void)
  * @param machine_start_tv - timestamp when the machine was started
  * @param real_tv
  */
-static SCTime_t DPDKSetTimevalReal(struct timeval *machine_start_tv)
+static inline SCTime_t DPDKSetTimevalReal(struct timeval *machine_start_tv, DPDKThreadVars *ptv)
 {
     struct timeval real_tv;
-    CyclesAddToTimeval(rte_get_tsc_cycles(), machine_start_tv, &real_tv);
+    CyclesAddToTimeval(rte_get_tsc_cycles(), machine_start_tv, &real_tv, ptv);
     return SCTIME_FROM_TIMEVAL(&real_tv);
 }
 
 /* get number of seconds from the reset of TSC counter (typically from the machine start) */
-static uint64_t DPDKGetSeconds(void)
+static uint64_t DPDKGetSeconds(uint64_t tsc_hz_per_s)
 {
-    return CyclesToSeconds(rte_get_tsc_cycles());
+    const uint64_t ticks_per_s = tsc_hz_per_s;
+    return rte_get_tsc_cycles() / ticks_per_s;
 }
 
 static void DevicePostStartPMDSpecificActions(DPDKThreadVars *ptv, const char *driver_name)
@@ -326,13 +366,21 @@ void TmModuleDecodeDPDKRegister(void)
     tmm_modules[TMM_DECODEDPDK].flags = TM_FLAG_DECODE_TM;
 }
 
-static inline void DPDKDumpCounters(DPDKThreadVars *ptv)
+static inline void DPDKDumpCounters(DPDKThreadVars *ptv, SCTime_t current_time)
 {
+    static uint64_t last_packets = 0;
+    static uint64_t last_bytes = 0;
+    static uint64_t last_missed = 0;
+    static uint64_t last_time = 0;
+    static uint64_t last_running_time = 0;
+    static uint64_t last_sleeping_time = 0;
     /* Some NICs (e.g. Intel) do not support queue statistics and the drops can be fetched only on
      * the port level. Therefore setting it to the first worker to have at least continuous update
      * on the dropped packets. */
     if (ptv->queue_id == 0) {
+
         struct rte_eth_stats eth_stats;
+
         int retval = rte_eth_stats_get(ptv->port_id, &eth_stats);
         if (unlikely(retval != 0)) {
             SCLogError("%s: failed to get stats: %s", ptv->livedev->dev, rte_strerror(-retval));
@@ -341,6 +389,8 @@ static inline void DPDKDumpCounters(DPDKThreadVars *ptv)
 
         StatsSetUI64(ptv->tv, ptv->capture_dpdk_packets,
                 ptv->pkts + eth_stats.imissed + eth_stats.ierrors + eth_stats.rx_nombuf);
+        StatsSetUI64(ptv->tv, ptv->capture_dpdk_bytes,
+                    ptv->pkts + eth_stats.ibytes);
         SC_ATOMIC_SET(ptv->livedev->pkts,
                 eth_stats.ipackets + eth_stats.imissed + eth_stats.ierrors + eth_stats.rx_nombuf);
         StatsSetUI64(ptv->tv, ptv->capture_dpdk_rx_errs,
@@ -349,6 +399,35 @@ static inline void DPDKDumpCounters(DPDKThreadVars *ptv)
         StatsSetUI64(ptv->tv, ptv->capture_dpdk_rx_no_mbufs, eth_stats.rx_nombuf);
         StatsSetUI64(ptv->tv, ptv->capture_dpdk_ierrors, eth_stats.ierrors);
         StatsSetUI64(ptv->tv, ptv->capture_dpdk_tx_errs, eth_stats.oerrors);
+
+        if (current_time.secs) {
+            //PrintDPDKPortXstats(ptv->port_id, ptv->livedev->dev);
+            //SCLogNotice("Dump p%lu b%lu", eth_stats.ipackets, eth_stats.ibytes);
+            uint64_t diff_packets = eth_stats.ipackets - last_packets;
+            if (diff_packets > 1000) {
+                uint64_t diff_bytes = eth_stats.ibytes - last_bytes;
+                uint64_t diff_missed = eth_stats.imissed - last_missed;
+                uint64_t diff_running = ptv->running_time - last_running_time;
+                uint64_t diff_sleeping = ptv->sleeping_time - last_sleeping_time;
+                uint64_t now_us = SCTIME_TO_USECS(current_time);
+                double t = (double)now_us / 1000000.0f;// - last_time;
+                double difft = (double)(now_us - last_time) / 1000000.0f;
+                SCLogNotice("SURINTERNAL-%f-RESULT-DPACKETS %f",t,diff_packets / difft);
+                SCLogNotice("SURINTERNAL-%f-RESULT-DBYTES %f",t,diff_bytes  / difft);
+                SCLogNotice("SURINTERNAL-%f-RESULT-DLINK %f",t,((diff_packets*24 + diff_bytes) * 8)  / difft);
+                SCLogNotice("SURINTERNAL-%f-RESULT-DLOSS %f",t,diff_missed  / difft);
+                SCLogNotice("SURINTERNAL-%f-RESULT-DLOSSPC %lu",t,100*diff_packets/(diff_packets+diff_missed));
+                if (diff_running + diff_sleeping > 1000) //Else the stat really does not make sense, also avoid division by 0
+                    SCLogNotice("SURINTERNAL-%f-RESULT-LOAD %d",t,diff_running * 100 / (diff_running + diff_sleeping));
+                last_packets = eth_stats.ipackets;
+                last_bytes = eth_stats.ibytes;
+                last_missed = eth_stats.imissed;
+                last_running_time = ptv->running_time;
+                last_sleeping_time = ptv->sleeping_time;
+
+                last_time = now_us;
+            }
+        }
         SC_ATOMIC_SET(
                 ptv->livedev->drop, eth_stats.imissed + eth_stats.ierrors + eth_stats.rx_nombuf);
     } else {
@@ -356,9 +435,63 @@ static inline void DPDKDumpCounters(DPDKThreadVars *ptv)
     }
 }
 
+#ifdef PROFILING
+static void PktStatsUpdate(SCTime_t rx_ts, uint64_t  rx_cycles, bool rxp_inspected)
+{
+    uint64_t now_us = SCTIME_TO_USECS(DPDKSetTimevalReal(&machine_start_time));
+    uint64_t delta_us = now_us - SCTIME_TO_USECS(rx_ts);
+    uint64_t now_cycles = rte_get_tsc_cycles();
+    uint64_t delta_cycles = now_cycles - rx_cycles;
+
+    if (rxp_inspected) {
+        pkt_rxp_pipeline_us_ttl += delta_us;
+        pkt_rxp_pipeline_cycles_ttl += delta_cycles;
+        if (delta_us < pkt_rxp_pipeline_us_min) {
+            pkt_rxp_pipeline_us_min = delta_us;
+        } else if (delta_us > pkt_rxp_pipeline_us_max) {
+            pkt_rxp_pipeline_us_max = delta_us;
+        }
+
+        if (delta_cycles < pkt_rxp_pipeline_cycles_min) {
+            pkt_rxp_pipeline_cycles_min = delta_cycles;
+        } else if (delta_cycles > pkt_rxp_pipeline_cycles_max) {
+            pkt_rxp_pipeline_cycles_max = delta_cycles;
+        }
+
+        pkt_rxp_pipeline_cnt++;
+    } else {
+        pkt_hs_pipeline_us_ttl += delta_us;
+        pkt_hs_pipeline_cycles_ttl += delta_cycles;
+        if (delta_us < pkt_hs_pipeline_us_min) {
+            pkt_hs_pipeline_us_min = delta_us;
+        } else if (delta_us > pkt_hs_pipeline_us_max) {
+            pkt_hs_pipeline_us_max = delta_us;
+        }
+
+        if (delta_cycles < pkt_hs_pipeline_cycles_min) {
+            pkt_hs_pipeline_cycles_min = delta_cycles;
+        } else if (delta_cycles > pkt_hs_pipeline_cycles_max) {
+            pkt_hs_pipeline_cycles_max = delta_cycles;
+        }
+
+        pkt_hs_pipeline_cnt++;
+    }
+}
+#endif
+
 static void DPDKReleasePacket(Packet *p)
 {
     int retval;
+    if (unlikely(p->rxp.async_in_progress)) {
+        SCLogInfo("Shouldn't be releasing the packet, async inspection is in progress");
+        return;
+    }
+
+    // if results are set to true, that means we inspected the packet using RXP, processed the results and now we are freeing the packet.
+    #ifdef PROFILING
+    PktStatsUpdate(p->ts, p->ts_cycles, p->rxp.rxp_results);
+    #endif
+    rte_pktmbuf_reset_headroom((struct rte_mbuf *)p->dpdk_v.mbuf);
     /* Need to be in copy mode and need to detect early release
        where Ethernet header could not be set (and pseudo packet)
        When enabling promiscuous mode on Intel cards, 2 ICMPv6 packets are generated.
@@ -412,14 +545,15 @@ static TmEcode ReceiveDPDKLoopInit(ThreadVars *tv, DPDKThreadVars *ptv)
     SCReturnInt(TM_ECODE_OK);
 }
 
-static inline void LoopHandleTimeoutOnIdle(ThreadVars *tv)
+static inline void LoopHandleTimeoutOnIdle(ThreadVars *tv, DPDKThreadVars *ptv, SCTime_t *recent)
 {
-    static uint64_t last_timeout_msec = 0;
-    SCTime_t t = DPDKSetTimevalReal(&machine_start_time);
-    uint64_t msecs = SCTIME_MSECS(t);
-    if (msecs > last_timeout_msec + 100) {
+
+    *recent = DPDKSetTimevalReal(&machine_start_time, ptv);
+
+    uint64_t msecs = SCTIME_MSECS(*recent);
+    if (msecs > ptv->last_timeout_msec + 100) {
         TmThreadsCaptureHandleTimeout(tv, NULL);
-        last_timeout_msec = msecs;
+        ptv->last_timeout_msec = msecs;
     }
 }
 
@@ -427,24 +561,39 @@ static inline void LoopHandleTimeoutOnIdle(ThreadVars *tv)
  * \brief Decides if it should retry the packet poll or continue with the packet processing
  * \return true if the poll should be retried, false otherwise
  */
-static inline bool RXPacketCountHeuristic(ThreadVars *tv, DPDKThreadVars *ptv, uint16_t nb_rx)
+static inline bool RXPacketCountHeuristic(ThreadVars *tv, DPDKThreadVars *ptv, uint16_t nb_rx, SCTime_t* recent)
 {
-    static uint32_t zero_pkt_polls_cnt = 0;
-
-    if (nb_rx > 0) {
-        zero_pkt_polls_cnt = 0;
+    *recent = DPDKSetTimevalReal(&machine_start_time, ptv);
+    if (likely(nb_rx > 0)) {
+        ptv->zero_pkt_polls_cnt = 0;
+        if (unlikely(ptv->intimeout)) {
+            ptv->intimeout = false;
+            ptv->sleeping_time += SCTIME_TO_USECS(*recent) - ptv->last_timeout_usec;
+            ptv->last_timeout_usec = SCTIME_TO_USECS(*recent);
+        }
         return false;
     }
 
-    LoopHandleTimeoutOnIdle(tv);
+    ptv->zero_pkt_polls_cnt++;
+
+    if (ptv->zero_pkt_polls_cnt > MIN_ZERO_POLL_COUNT) {
+        if (!ptv->intimeout) {
+            ptv->intimeout = true;
+            ptv->running_time += SCTIME_TO_USECS(*recent) - ptv->last_timeout_usec;
+            ptv->last_timeout_usec = SCTIME_TO_USECS(*recent);
+        }
+        LoopHandleTimeoutOnIdle(tv, ptv, recent);
+
+    }
+
     if (!ptv->intr_enabled)
         return true;
 
-    zero_pkt_polls_cnt++;
-    if (zero_pkt_polls_cnt <= MIN_ZERO_POLL_COUNT)
+
+    if (ptv->zero_pkt_polls_cnt <= MIN_ZERO_POLL_COUNT)
         return true;
 
-    uint32_t pwd_idle_hint = InterruptsSleepHeuristic(zero_pkt_polls_cnt);
+    uint32_t pwd_idle_hint = InterruptsSleepHeuristic(ptv->zero_pkt_polls_cnt);
     if (pwd_idle_hint < STANDARD_SLEEP_TIME_US) {
         rte_delay_us(pwd_idle_hint);
     } else {
@@ -462,7 +611,7 @@ static inline bool RXPacketCountHeuristic(ThreadVars *tv, DPDKThreadVars *ptv, u
  * \brief Initializes a packet from an mbuf
  * \return true if the packet was initialized successfully, false otherwise
  */
-static inline Packet *PacketInitFromMbuf(DPDKThreadVars *ptv, struct rte_mbuf *mbuf)
+static inline Packet *PacketInitFromMbuf(DPDKThreadVars *ptv, struct rte_mbuf *mbuf, SCTime_t recent_ts)
 {
     Packet *p = PacketGetFromQueueOrAlloc();
     if (unlikely(p == NULL)) {
@@ -474,13 +623,24 @@ static inline Packet *PacketInitFromMbuf(DPDKThreadVars *ptv, struct rte_mbuf *m
         p->flags |= PKT_IGNORE_CHECKSUM;
     }
 
-    p->ts = DPDKSetTimevalReal(&machine_start_time);
+    p->ts = recent_ts;
+#ifdef PROFILING
+    p->ts_cycles = rte_get_tsc_cycles();
+#endif
     p->dpdk_v.mbuf = mbuf;
     p->ReleasePacket = DPDKReleasePacket;
     p->dpdk_v.copy_mode = ptv->copy_mode;
     p->dpdk_v.out_port_id = ptv->out_port_id;
     p->dpdk_v.out_queue_id = ptv->queue_id;
     p->livedev = ptv->livedev;
+
+#if HAVE_RSS_FLOW_HASH
+    if (mbuf->ol_flags & RTE_MBUF_F_RX_RSS_HASH)
+        p->flow_hash = mbuf->hash.rss;
+    else
+        p->flow_hash = 0;
+    FlowPrefetch(p->flow_hash);
+#endif
 
     if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
         p->flags |= PKT_IGNORE_CHECKSUM;
@@ -503,6 +663,7 @@ static inline Packet *PacketInitFromMbuf(DPDKThreadVars *ptv, struct rte_mbuf *m
         }
     }
 
+    PMQ_RESET(&p->stream_data.pmq);
     return p;
 }
 
@@ -535,7 +696,7 @@ static void HandleShutdown(DPDKThreadVars *ptv)
         rte_delay_us(10);
     }
     if (ptv->queue_id == 0) {
-        rte_delay_us(20); // wait for all threads to get out of the sync loop
+        rte_delay_us(2000); // wait for all threads to get out of the sync loop
         SC_ATOMIC_SET(ptv->workers_sync->worker_checked_in, 0);
         // If Suricata runs in peered mode, the peer threads might still want to send
         // packets to our port. Instead, we know, that we are done with the peered port, so
@@ -547,20 +708,65 @@ static void HandleShutdown(DPDKThreadVars *ptv)
             rte_eth_dev_stop(ptv->port_id);
         }
     }
-    DPDKDumpCounters(ptv);
+    DPDKDumpCounters(ptv, SCTIME_ZERO());
 }
 
-static void PeriodicDPDKDumpCounters(DPDKThreadVars *ptv)
+static void PeriodicDPDKDumpCounters(DPDKThreadVars *ptv, SCTime_t* recent)
 {
     static time_t last_dump = 0;
-    time_t current_time = DPDKGetSeconds();
+    time_t current_time = recent->secs;
+
+    struct rte_mempool* pool = ptv->pkt_mempool;
+
+
     /* Trigger one dump of stats every second */
     if (current_time != last_dump) {
-        DPDKDumpCounters(ptv);
+        SCLogNotice("Dump %d",current_time);
+        if (pool)
+            SCLogNotice("Pool %d has %d packets",ptv->queue_id,rte_mempool_avail_count(pool));
+        DPDKDumpCounters(ptv,*recent);
         last_dump = current_time;
     }
 }
 
+/**
+ * \brief The check needs to verify that:
+ *  - all stream inprogress are 0
+ *  - all TXes inprogress are 0
+ */
+static bool AsyncCheckForFullProcessing(Packet *p)
+{
+    if (p->stream_data.jobs_inprogress > 0) {
+        return false;
+    }
+
+    p->rxp.async_in_progress = false;
+    p->rxp.rxp_results = true;
+    return true;
+}
+
+#include "flow-worker.h"
+
+static __attribute__ ((noinline))  void do_rxp_dequeue(DPDKThreadVars *ptv, struct rte_regex_ops **ops) {
+
+        uint16_t deqed = rte_regexdev_dequeue_burst(
+                0, ptv->queue_id, ops, MPM_RXP_OPERATIONS);
+        if (deqed > 0) {
+            SCLogDebug("Got %d RXP ops", deqed);
+            ptv->zero_pkt_polls_cnt = 0;
+            for (uint16_t i = 0; i < deqed; i++) {
+                struct rte_regex_ops *o = ops[i];
+                Packet *op_p;
+                SCRXPProcessRegexOp(o, &op_p);
+                if (AsyncCheckForFullProcessing(op_p)) {
+                    //TmSlot* fw_slot = ptv->tv->tm_flowworker;
+                    //FlowWorker(ptv->tv, op_p, SC_ATOMIC_GET(fw_slot->slot_data));
+
+                    TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, op_p);
+                }
+            }
+        }
+}
 /**
  *  \brief Main DPDK reading Loop function
  */
@@ -568,32 +774,81 @@ static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
 {
     SCEnter();
     DPDKThreadVars *ptv = (DPDKThreadVars *)data;
-    ptv->slot = (TmSlot *)slot;
+    ptv->slot = ((TmSlot *)slot)->slot_next;
+    ptv->last_flush = 0;
+    ptv->zero_pkt_polls_cnt = 0;
+    ptv->last_timeout_msec = 0;
+    ptv->tsc_hz_per_s = rte_get_tsc_hz();
+    ptv->tsc_hz_per_us = rte_get_tsc_hz() / 1000000;
+    uint64_t pkt_num = 0;
+
+#if HAVE_RSSPP
+    /*struct rte_eth_rss_conf conf;
+    rte_eth_dev_rss_hash_conf_get(0, &conf);
+*/
+
+    struct rte_eth_dev_info * dev_info;
+    rte_eth_dev_info_get(0, &dev_info);
+    uint32_t reta_mask = dev_info.reta_size - 1;
+    ptv->hash_count = SCCalloc(dev_info.reta_size, sizeof(uint64_t));
+#endif
+
+    struct rte_regex_ops **ops = NULL;
+    if (mpm_chosen_matcher == MPM_RXP) {
+        struct rte_regexdev_info info;
+        int res = rte_regexdev_info_get(0, &info);
+        if (res != 0) {
+            FatalError("Cannot get device info");
+        }
+        ops = RXPOpsAlloc(MPM_RXP_OPERATIONS * 4, info.max_matches);
+        if (ops == NULL) {
+            FatalError("Cannot allocate RXPOps");
+        }        
+    }
+
+
     TmEcode ret = ReceiveDPDKLoopInit(tv, ptv);
     if (ret != TM_ECODE_OK) {
         SCReturnInt(ret);
     }
+    SCTime_t recent = DPDKSetTimevalReal(&machine_start_time, ptv);
     while (true) {
         if (unlikely(suricata_ctl_flags != 0)) {
             HandleShutdown(ptv);
             break;
         }
 
+        if (mpm_chosen_matcher == MPM_RXP) {
+            do_rxp_dequeue(ptv,ops);
+        }
+
         uint16_t nb_rx =
                 rte_eth_rx_burst(ptv->port_id, ptv->queue_id, ptv->received_mbufs, BURST_SIZE);
-        if (RXPacketCountHeuristic(tv, ptv, nb_rx)) {
+
+        if (RXPacketCountHeuristic(tv, ptv, nb_rx, &recent)) {
             continue;
         }
 
+        // = DPDKSetTimevalReal(&machine_start_time, ptv);
         ptv->pkts += (uint64_t)nb_rx;
         for (uint16_t i = 0; i < nb_rx; i++) {
-            Packet *p = PacketInitFromMbuf(ptv, ptv->received_mbufs[i]);
+            Packet *p = PacketInitFromMbuf(ptv, ptv->received_mbufs[i], recent);
+            #if HAVE_RSSPP
+            if (ptv->received_mbufs[i]->ol_flags & RTE_MBUF_F_RX_RSS_HASH)
+                ptv->hash_count[mbuf->hash.rss % reta_mask] += 1;
+        #endif
             if (p == NULL) {
                 rte_pktmbuf_free(ptv->received_mbufs[i]);
                 continue;
             }
+            p->pcap_cnt = pkt_num++;
+
             DPDKSegmentedMbufWarning(ptv->received_mbufs[i]);
-            PacketSetData(p, rte_pktmbuf_mtod(p->dpdk_v.mbuf, uint8_t *),
+
+            unsigned char* data = rte_pktmbuf_mtod(p->dpdk_v.mbuf, uint8_t *);
+
+            rte_prefetch0(data);
+            PacketSetData(p, data,
                     rte_pktmbuf_pkt_len(p->dpdk_v.mbuf));
             if (TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p) != TM_ECODE_OK) {
                 TmqhOutputPacketpool(ptv->tv, p);
@@ -602,9 +857,12 @@ static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
             }
         }
 
-        PeriodicDPDKDumpCounters(ptv);
-        StatsSyncCountersIfSignalled(tv);
+        if (ptv->queue_id == 0) {
+            PeriodicDPDKDumpCounters(ptv, &recent);
+            StatsSyncCountersIfSignalled(tv);
+        }
     }
+    SCLogDebug("Out of loop");
 
     SCReturnInt(TM_ECODE_OK);
 }
@@ -641,6 +899,7 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
     ptv->livedev = LiveGetDevice(dpdk_config->iface);
 
     ptv->capture_dpdk_packets = StatsRegisterCounter("capture.packets", ptv->tv);
+    ptv->capture_dpdk_bytes = StatsRegisterCounter("capture.bytes", ptv->tv);
     ptv->capture_dpdk_rx_errs = StatsRegisterCounter("capture.rx_errors", ptv->tv);
     ptv->capture_dpdk_tx_errs = StatsRegisterCounter("capture.tx_errors", ptv->tv);
     ptv->capture_dpdk_imissed = StatsRegisterCounter("capture.dpdk.imissed", ptv->tv);
@@ -652,12 +911,10 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
 
     ptv->threads = dpdk_config->threads;
     ptv->intr_enabled = (dpdk_config->flags & DPDK_IRQ_MODE) ? true : false;
+    ptv->rsspp_enabled = (dpdk_config->flags & DPDK_RSSPP_ENABLE) ? true : false;
     ptv->port_id = dpdk_config->port_id;
     ptv->out_port_id = dpdk_config->out_port_id;
     ptv->port_socket_id = dpdk_config->socket_id;
-    // pass the pointer to the mempool and then forget about it. Mempool is freed in thread deinit.
-    ptv->pkt_mempool = dpdk_config->pkt_mempool;
-    dpdk_config->pkt_mempool = NULL;
 
     thread_numa = GetNumaNode();
     if (thread_numa >= 0 && ptv->port_socket_id != SOCKET_ID_ANY &&
@@ -669,7 +926,11 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
 
     ptv->workers_sync = dpdk_config->workers_sync;
     uint16_t queue_id = SC_ATOMIC_ADD(dpdk_config->queue_id, 1);
+    SCLogNotice("initting thread %d", queue_id);
     ptv->queue_id = queue_id;
+    // pass the pointer to the mempool and then forget about it. Mempool is freed in thread deinit.
+    ptv->pkt_mempool = dpdk_config->pkt_mempool[ptv->queue_id];
+    dpdk_config->pkt_mempool[ptv->queue_id] = NULL;
 
     // the last thread starts the device
     if (queue_id == dpdk_config->threads - 1) {
@@ -679,6 +940,11 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
                     rte_strerror(-retval));
             goto fail;
         }
+
+        SCLogNotice("%s: device started", dpdk_config->iface);
+        if (ptv->rsspp_enabled)
+            DPDKInitBalancer();
+
 
         struct rte_eth_dev_info dev_info;
         retval = rte_eth_dev_info_get(ptv->port_id, &dev_info);
@@ -717,7 +983,7 @@ fail:
     SCReturnInt(TM_ECODE_FAILED);
 }
 
-static void PrintDPDKPortXstats(uint32_t port_id, const char *port_name)
+ void PrintDPDKPortXstats(uint32_t port_id, const char *port_name)
 {
     struct rte_eth_xstat *xstats;
     struct rte_eth_xstat_name *xstats_names;
@@ -751,7 +1017,7 @@ static void PrintDPDKPortXstats(uint32_t port_id, const char *port_name)
     }
     for (int32_t i = 0; i < len; i++) {
         if (xstats[i].value > 0)
-            SCLogPerf("Port %u (%s) - %s: %" PRIu64, port_id, port_name, xstats_names[i].name,
+            SCLogNotice("Port %u (%s) - %s: %" PRIu64, port_id, port_name, xstats_names[i].name,
                     xstats[i].value);
     }
 
@@ -774,11 +1040,18 @@ static void ReceiveDPDKThreadExitStats(ThreadVars *tv, void *data)
         struct rte_eth_stats eth_stats;
         PrintDPDKPortXstats(ptv->port_id, ptv->livedev->dev);
         retval = rte_eth_stats_get(ptv->port_id, &eth_stats);
+
         if (unlikely(retval != 0)) {
             SCLogError("%s: failed to get stats (%s)", ptv->livedev->dev, strerror(-retval));
             SCReturn;
         }
-        SCLogPerf("%s: total RX stats: packets %" PRIu64 " bytes: %" PRIu64 " missed: %" PRIu64
+        for (int i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS; i++) {
+            SCLogInfo("q%d-ipackets %lu", i, eth_stats.q_ipackets[i]);
+            SCLogInfo("q%d-ibytes %lu", i, eth_stats.q_ibytes[i]);
+            SCLogInfo("q%d-errors %lu", i, eth_stats.q_errors[i]);
+        }
+        SCLogInfo("nombufs %lu", eth_stats.rx_nombuf);
+        SCLogInfo("%s: total RX stats: packets %" PRIu64 " bytes: %" PRIu64 " missed: %" PRIu64
                   " errors: %" PRIu64 " nombufs: %" PRIu64,
                 ptv->livedev->dev, eth_stats.ipackets, eth_stats.ibytes, eth_stats.imissed,
                 eth_stats.ierrors, eth_stats.rx_nombuf);
@@ -786,8 +1059,31 @@ static void ReceiveDPDKThreadExitStats(ThreadVars *tv, void *data)
             SCLogPerf("%s: total TX stats: packets %" PRIu64 " bytes: %" PRIu64 " errors: %" PRIu64,
                     ptv->livedev->dev, eth_stats.opackets, eth_stats.obytes, eth_stats.oerrors);
     }
-
-    DPDKDumpCounters(ptv);
+#ifdef PROFILING
+    printf("RESULT-thread-%u-hs-rx2free-min-us %lu\n", ptv->queue_id, pkt_hs_pipeline_us_min);
+    printf("RESULT-thread-%u-hs-rx2free-min-cycles %lu\n", ptv->queue_id, pkt_hs_pipeline_cycles_min);    
+    if (pkt_hs_pipeline_cnt) {
+        printf("RESULT-thread-%u-hs-rx2free-avg-us %lu\n", ptv->queue_id, pkt_hs_pipeline_us_ttl / pkt_hs_pipeline_cnt);
+        printf("RESULT-thread-%u-hs-rx2free-avg-cycles %lu\n", ptv->queue_id, pkt_hs_pipeline_cycles_ttl / pkt_hs_pipeline_cnt);
+    } else {
+        printf("RESULT-thread-%u-hs-rx2free-avg-us %lu\n", ptv->queue_id, (unsigned long)0);
+        printf("RESULT-thread-%u-hs-rx2free-avg-cycles %lu\n", ptv->queue_id, (unsigned long)0);
+    }
+    printf("RESULT-thread-%u-hs-rx2free-max-us %lu\n", ptv->queue_id, pkt_hs_pipeline_us_max);
+    printf("RESULT-thread-%u-hs-rx2free-max-cycles %lu\n", ptv->queue_id, pkt_hs_pipeline_cycles_max);
+    printf("RESULT-thread-%u-rxp-rx2free-min-us %lu\n", ptv->queue_id, pkt_rxp_pipeline_us_min);
+    printf("RESULT-thread-%u-rxp-rx2free-min-cycles %lu\n", ptv->queue_id, pkt_rxp_pipeline_cycles_min);
+    if (pkt_rxp_pipeline_cnt) {
+        printf("RESULT-thread-%u-rxp-rx2free-avg-us %lu\n", ptv->queue_id, pkt_rxp_pipeline_us_ttl / pkt_rxp_pipeline_cnt);
+        printf("RESULT-thread-%u-rxp-rx2free-avg-cycles %lu\n", ptv->queue_id, pkt_rxp_pipeline_cycles_ttl / pkt_rxp_pipeline_cnt);
+    } else {
+        printf("RESULT-thread-%u-rxp-rx2free-avg-us %lu\n", ptv->queue_id, (unsigned long)0);
+        printf("RESULT-thread-%u-rxp-rx2free-avg-cycles %lu\n", ptv->queue_id, (unsigned long)0);
+    }
+    printf("RESULT-thread-%u-rxp-rx2free-max-us %lu\n", ptv->queue_id, pkt_rxp_pipeline_us_max);
+    printf("RESULT-thread-%u-rxp-rx2free-max-cycles %lu\n", ptv->queue_id, pkt_rxp_pipeline_cycles_max);
+#endif
+    DPDKDumpCounters(ptv, SCTIME_ZERO());
     SCLogPerf("(%s) received packets %" PRIu64, tv->name, ptv->pkts);
 }
 
@@ -815,6 +1111,8 @@ static TmEcode ReceiveDPDKThreadDeinit(ThreadVars *tv, void *data)
         if (ptv->workers_sync) {
             SCFree(ptv->workers_sync);
         }
+
+
     }
 
     ptv->pkt_mempool = NULL; // MP is released when device is closed
@@ -836,6 +1134,10 @@ static TmEcode ReceiveDPDKThreadDeinit(ThreadVars *tv, void *data)
 static TmEcode DecodeDPDK(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
+    //if we are waiting for RXP parsing, it means this packet was already decoded
+    if (p->rxp.rxp_results)
+        SCReturnInt(TM_ECODE_OK);
+
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
     BUG_ON(PKT_IS_PSEUDOPKT(p));

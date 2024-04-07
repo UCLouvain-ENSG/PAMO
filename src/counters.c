@@ -691,6 +691,8 @@ static int StatsOutput(ThreadVars *tv)
         }
 
         stats_table.start_time = stats_start_time;
+        gettimeofday(&stats_table.process_start_time, 0);
+
     }
 
     const uint16_t max_id = counters_global_id;

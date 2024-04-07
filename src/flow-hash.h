@@ -26,6 +26,8 @@
 
 #include "flow.h"
 
+#define HAVE_RSS_FLOW_HASH 0
+
 /** Spinlocks or Mutex for the flow buckets. */
 //#define FBLOCK_SPIN
 #define FBLOCK_MUTEX
@@ -101,5 +103,9 @@ static inline void RemoveFromHash(Flow *f, Flow *prev_f)
     f->next = NULL;
     f->fb = NULL;
 }
+
+#if HAVE_RSS_FLOW_HASH
+void FlowPrefetch(const uint32_t hash);
+#endif
 
 #endif /* SURICATA_FLOW_HASH_H */

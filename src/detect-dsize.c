@@ -191,7 +191,7 @@ PrefilterPacketDsizeMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const void 
 
     if (DetectU16Match(dsize, &du16)) {
         SCLogDebug("packet matches dsize %u", dsize);
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

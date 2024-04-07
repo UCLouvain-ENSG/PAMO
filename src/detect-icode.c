@@ -168,7 +168,7 @@ static void PrefilterPacketICodeMatch(DetectEngineThreadCtx *det_ctx,
     const PrefilterPacketU8HashCtx *h = pectx;
     const SigsArray *sa = h->array[picode];
     if (sa) {
-        PrefilterAddSids(&det_ctx->pmq, sa->sigs, sa->cnt);
+        PrefilterAddSids(&p->stream_data.pmq,   sa->sigs, sa->cnt);
     }
 }
 

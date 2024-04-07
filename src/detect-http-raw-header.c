@@ -263,7 +263,7 @@ static void PrefilterMpmHttpHeaderRaw(DetectEngineThreadCtx *det_ctx, const void
 
     if (data != NULL && data_len >= mpm_ctx->minlen) {
         (void)mpm_table[mpm_ctx->mpm_type].Search(
-                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len);
+                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len, NULL);
         PREFILTER_PROFILING_ADD_BYTES(det_ctx, data_len);
     }
 }

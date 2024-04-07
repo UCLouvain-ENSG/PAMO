@@ -1548,6 +1548,15 @@ typedef struct DetectEngineMasterCtx_ {
     int keyword_id;
 } DetectEngineMasterCtx;
 
+
+typedef struct DetectRunScratchpad {
+    AppProto alproto;
+    uint8_t flow_flags; /* flow/state flags: STREAM_* */
+    bool app_decoder_events;
+    const SigGroupHead *sgh;
+    SignatureMask pkt_mask;
+} DetectRunScratchpad;
+
 /* Table with all SigMatch registrations */
 extern SigTableElmt sigmatch_table[DETECT_TBLSIZE];
 

@@ -24,6 +24,8 @@
 #ifndef SURICATA_DETECT_ENGINE_PAYLOAD_H
 #define SURICATA_DETECT_ENGINE_PAYLOAD_H
 
+extern thread_local uint64_t g_stream_mpm_calls;
+
 int PrefilterPktPayloadRegister(DetectEngineCtx *de_ctx,
         SigGroupHead *sgh, MpmCtx *mpm_ctx);
 int PrefilterPktStreamRegister(DetectEngineCtx *de_ctx,
@@ -38,6 +40,10 @@ uint8_t DetectEngineInspectStream(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
         const struct DetectEngineAppInspectionEngine_ *engine, const Signature *s, Flow *f,
         uint8_t flags, void *alstate, void *txv, uint64_t tx_id);
 
+void PrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
+                Packet *p, const void *pectx);
+void PrefilterPktStream(DetectEngineThreadCtx *det_ctx,
+                        Packet *p, const void *pectx);
 void PayloadRegisterTests(void);
 
 #endif /* SURICATA_DETECT_ENGINE_PAYLOAD_H */

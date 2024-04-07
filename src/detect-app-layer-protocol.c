@@ -213,13 +213,13 @@ PrefilterPacketAppProtoMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const vo
     {
         int r = (ctx->v1.u16[0] == p->flow->alproto_ts) ^ ctx->v1.u8[2];
         if (r) {
-            PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+            PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
         }
     } else if ((p->flags & PKT_PROTO_DETECT_TC_DONE) && (p->flowflags & FLOW_PKT_TOCLIENT))
     {
         int r = (ctx->v1.u16[0] == p->flow->alproto_tc) ^ ctx->v1.u8[2];
         if (r) {
-            PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+            PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
         }
     }
 }

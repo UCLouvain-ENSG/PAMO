@@ -164,7 +164,7 @@ PrefilterPacketTtlMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const void *p
     du8.arg2 = ctx->v1.u8[2];
     if (DetectU8Match(pttl, &du8)) {
         SCLogDebug("packet matches ttl/hl %u", pttl);
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

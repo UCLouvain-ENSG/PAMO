@@ -499,7 +499,7 @@ struct AlertJsonStreamDataCallbackData {
 };
 
 static int AlertJsonStreamDataCallback(
-        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset)
+        void *cb_data, const uint8_t *input, const uint32_t input_len, const uint64_t input_offset, Packet *p)
 {
     struct AlertJsonStreamDataCallbackData *cbd = cb_data;
     if (input_offset > cbd->last_re) {

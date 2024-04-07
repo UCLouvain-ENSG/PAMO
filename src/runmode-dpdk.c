@@ -60,25 +60,7 @@ uint8_t rss_hkey[] = { 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5
 
 // Calculates the closest multiple of y from x
 #define ROUNDUP(x, y) ((((x) + ((y)-1)) / (y)) * (y))
-
-/* Maximum DPDK EAL parameters count. */
-#define EAL_ARGS 48
-
-struct Arguments {
-    uint16_t capacity;
-    char **argv;
-    uint16_t argc;
-};
-
-static char *AllocArgument(size_t arg_len);
-static char *AllocAndSetArgument(const char *arg);
-static char *AllocAndSetOption(const char *arg);
-
-static void ArgumentsInit(struct Arguments *args, unsigned capacity);
-static void ArgumentsCleanup(struct Arguments *args);
-static void ArgumentsAdd(struct Arguments *args, char *value);
-static void ArgumentsAddOptionAndArgument(struct Arguments *args, const char *opt, const char *arg);
-static void InitEal(void);
+#define NEXT_POW2(x) (1UL << (64 - __builtin_clzl((x) - 1)))
 
 static void ConfigSetIface(DPDKIfaceConfig *iconf, const char *entry_str);
 static int ConfigSetThreads(DPDKIfaceConfig *iconf, const char *entry_str);
@@ -116,7 +98,7 @@ static void DPDKDerefConfig(void *conf);
 #define DPDK_CONFIG_DEFAULT_MEMPOOL_CACHE_SIZE          "auto"
 #define DPDK_CONFIG_DEFAULT_RX_DESCRIPTORS              1024
 #define DPDK_CONFIG_DEFAULT_TX_DESCRIPTORS              1024
-#define DPDK_CONFIG_DEFAULT_RSS_HASH_FUNCTIONS          RTE_ETH_RSS_IP
+#define DPDK_CONFIG_DEFAULT_RSS_HASH_FUNCTIONS          (RTE_ETH_RSS_IP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP)
 #define DPDK_CONFIG_DEFAULT_MTU                         1500
 #define DPDK_CONFIG_DEFAULT_PROMISCUOUS_MODE            1
 #define DPDK_CONFIG_DEFAULT_MULTICAST_MODE              1
@@ -128,6 +110,7 @@ static void DPDKDerefConfig(void *conf);
 DPDKIfaceConfigAttributes dpdk_yaml = {
     .threads = "threads",
     .irq_mode = "interrupt-mode",
+    .rsspp_enable = "rsspp-enable",
     .promisc = "promisc",
     .multicast = "multicast",
     .checksum_checks = "checksum-checks",
@@ -152,169 +135,17 @@ static int GreatestDivisorUpTo(uint32_t num, uint32_t max_num)
     return 1;
 }
 
-static char *AllocArgument(size_t arg_len)
-{
-    SCEnter();
-    char *ptr;
-
-    arg_len += 1; // null character
-    ptr = (char *)SCCalloc(arg_len, sizeof(char));
-    if (ptr == NULL)
-        FatalError("Could not allocate memory for an argument");
-
-    SCReturnPtr(ptr, "char *");
-}
-
-/**
- * Allocates space for length of the given string and then copies contents
- * @param arg String to set to the newly allocated space
- * @return memory address if no error otherwise NULL (with errno set)
- */
-static char *AllocAndSetArgument(const char *arg)
-{
-    SCEnter();
-    if (arg == NULL)
-        FatalError("Passed argument is NULL in DPDK config initialization");
-
-    char *ptr;
-    size_t arg_len = strlen(arg);
-
-    ptr = AllocArgument(arg_len);
-    strlcpy(ptr, arg, arg_len + 1);
-    SCReturnPtr(ptr, "char *");
-}
-
-static char *AllocAndSetOption(const char *arg)
-{
-    SCEnter();
-    if (arg == NULL)
-        FatalError("Passed option is NULL in DPDK config initialization");
-
-    char *ptr = NULL;
-    size_t arg_len = strlen(arg);
-    uint8_t is_long_arg = arg_len > 1;
-    const char *dash_prefix = is_long_arg ? "--" : "-";
-    size_t full_len = arg_len + strlen(dash_prefix);
-
-    ptr = AllocArgument(full_len);
-    strlcpy(ptr, dash_prefix, strlen(dash_prefix) + 1);
-    strlcat(ptr, arg, full_len + 1);
-    SCReturnPtr(ptr, "char *");
-}
-
-static void ArgumentsInit(struct Arguments *args, unsigned capacity)
-{
-    SCEnter();
-    args->argv = SCCalloc(capacity, sizeof(*args->argv)); // alloc array of pointers
-    if (args->argv == NULL)
-        FatalError("Could not allocate memory for Arguments structure");
-
-    args->capacity = capacity;
-    args->argc = 0;
-    SCReturn;
-}
-
-static void ArgumentsCleanup(struct Arguments *args)
-{
-    SCEnter();
-    for (int i = 0; i < args->argc; i++) {
-        if (args->argv[i] != NULL) {
-            SCFree(args->argv[i]);
-            args->argv[i] = NULL;
-        }
-    }
-
-    SCFree(args->argv);
-    args->argv = NULL;
-    args->argc = 0;
-    args->capacity = 0;
-}
-
-static void ArgumentsAdd(struct Arguments *args, char *value)
-{
-    SCEnter();
-    if (args->argc + 1 > args->capacity)
-        FatalError("No capacity for more arguments (Max: %" PRIu32 ")", EAL_ARGS);
-
-    args->argv[args->argc++] = value;
-    SCReturn;
-}
-
-static void ArgumentsAddOptionAndArgument(struct Arguments *args, const char *opt, const char *arg)
-{
-    SCEnter();
-    char *option;
-    char *argument;
-
-    option = AllocAndSetOption(opt);
-    ArgumentsAdd(args, option);
-
-    // Empty argument could mean option only (e.g. --no-huge)
-    if (arg == NULL || arg[0] == '\0')
-        SCReturn;
-
-    argument = AllocAndSetArgument(arg);
-    ArgumentsAdd(args, argument);
-    SCReturn;
-}
-
-static void InitEal(void)
-{
-    SCEnter();
-    int retval;
-    ConfNode *param;
-    const ConfNode *eal_params = ConfGetNode("dpdk.eal-params");
-    struct Arguments args;
-    char **eal_argv;
-
-    if (eal_params == NULL) {
-        FatalError("DPDK EAL parameters not found in the config");
-    }
-
-    ArgumentsInit(&args, EAL_ARGS);
-    ArgumentsAdd(&args, AllocAndSetArgument("suricata"));
-
-    TAILQ_FOREACH (param, &eal_params->head, next) {
-        if (ConfNodeIsSequence(param)) {
-            const char *key = param->name;
-            ConfNode *val;
-            TAILQ_FOREACH (val, &param->head, next) {
-                ArgumentsAddOptionAndArgument(&args, key, (const char *)val->val);
-            }
-            continue;
-        }
-        ArgumentsAddOptionAndArgument(&args, param->name, param->val);
-    }
-
-    // creating a shallow copy for cleanup because rte_eal_init changes array contents
-    eal_argv = SCCalloc(args.argc, sizeof(*args.argv));
-    if (eal_argv == NULL) {
-        FatalError("Failed to allocate memory for the array of DPDK EAL arguments");
-    }
-    memcpy(eal_argv, args.argv, args.argc * sizeof(*args.argv));
-
-    rte_log_set_global_level(RTE_LOG_WARNING);
-    retval = rte_eal_init(args.argc, eal_argv);
-
-    ArgumentsCleanup(&args);
-    SCFree(eal_argv);
-
-    if (retval < 0) { // retval bound to the result of rte_eal_init
-        FatalError("DPDK EAL initialization error: %s", rte_strerror(-retval));
-    }
-    DPDKSetTimevalOfMachineStart();
-}
-
 static void DPDKDerefConfig(void *conf)
 {
     SCEnter();
     DPDKIfaceConfig *iconf = (DPDKIfaceConfig *)conf;
 
     if (SC_ATOMIC_SUB(iconf->ref, 1) == 1) {
-        if (iconf->pkt_mempool != NULL) {
-            rte_mempool_free(iconf->pkt_mempool);
+        for (int32_t i = 0; i < iconf->threads; i++) {
+            if (iconf->pkt_mempool[i] != NULL) {
+                rte_mempool_free(iconf->pkt_mempool[i]);
+            }
         }
-
         SCFree(iconf);
     }
     SCReturn;
@@ -328,7 +159,7 @@ static void ConfigInit(DPDKIfaceConfig **iconf)
     if (ptr == NULL)
         FatalError("Could not allocate memory for DPDKIfaceConfig");
 
-    ptr->pkt_mempool = NULL;
+//    ptr->pkt_mempool = NULL;
     ptr->out_port_id = -1; // make sure no port is set
     SC_ATOMIC_INIT(ptr->ref);
     (void)SC_ATOMIC_ADD(ptr->ref, 1);
@@ -725,6 +556,16 @@ static int ConfigLoad(DPDKIfaceConfig *iconf, const char *iface)
     retval = ConfigSetInterruptMode(iconf, irq_enable);
     if (retval != true)
         SCReturnInt(-EINVAL);
+
+    bool rsspp_enable;
+    retval = ConfGetChildValueBoolWithDefault(if_root, if_default, dpdk_yaml.rsspp_enable, &entry_bool);
+    if (retval != 1) {
+        rsspp_enable = true;
+    } else {
+        rsspp_enable = entry_bool ? true : false;
+    }
+    if (rsspp_enable)
+        iconf->flags |= DPDK_RSSPP_ENABLE;
 
     // currently only mapping "1 thread == 1 RX (and 1 TX queue in IPS mode)" is supported
     retval = ConfigSetRxQueues(iconf, (uint16_t)iconf->threads);
@@ -1123,12 +964,28 @@ static int32_t DeviceSetSocketID(uint16_t port_id, int32_t *socket_id)
     return retval;
 }
 
+static uint32_t MempoolCacheSizeCalculate(uint32_t mp_sz)
+{
+    // It is advised to have mempool cache size lower or equal to:
+    //   RTE_MEMPOOL_CACHE_MAX_SIZE (by default 512) and "mempool-size / 1.5"
+    // and at the same time "mempool-size modulo cache_size == 0".
+    uint32_t max_cache_size = MIN(RTE_MEMPOOL_CACHE_MAX_SIZE, mp_sz / 1.5);
+    return GreatestDivisorUpTo(mp_sz, max_cache_size);
+}
+
 static void PortConfSetInterruptMode(const DPDKIfaceConfig *iconf, struct rte_eth_conf *port_conf)
 {
     SCLogConfig("%s: interrupt mode is %s", iconf->iface,
             iconf->flags & DPDK_IRQ_MODE ? "enabled" : "disabled");
     if (iconf->flags & DPDK_IRQ_MODE)
         port_conf->intr_conf.rxq = 1;
+}
+
+static void PortConfSetRSSPPMode(const DPDKIfaceConfig *iconf, struct rte_eth_conf *port_conf)
+{
+    SCLogConfig("%s: RSS++ mode is %s", iconf->iface,
+            iconf->flags & DPDK_RSSPP_ENABLE ? "enabled" : "disabled");
+
 }
 
 static void PortConfSetRSSConf(const DPDKIfaceConfig *iconf,
@@ -1205,11 +1062,14 @@ static void DeviceInitPortConf(const DPDKIfaceConfig *iconf,
     };
 
     PortConfSetInterruptMode(iconf, port_conf);
+    PortConfSetRSSPPMode(iconf, port_conf);
 
     // configure RX offloads
     PortConfSetRSSConf(iconf, dev_info, port_conf);
     PortConfSetChsumOffload(iconf, dev_info, port_conf);
     DeviceSetMTU(port_conf, iconf->mtu);
+
+
 
     if (dev_info->tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) {
         port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
@@ -1226,21 +1086,27 @@ static int DeviceConfigureQueues(DPDKIfaceConfig *iconf, const struct rte_eth_de
     struct rte_eth_rxconf rxq_conf;
     struct rte_eth_txconf txq_conf;
 
-    char mempool_name[64];
-    snprintf(mempool_name, 64, "mempool_%.20s", iconf->iface);
-    // +4 for VLAN header
-    mtu_size = iconf->mtu + RTE_ETHER_CRC_LEN + RTE_ETHER_HDR_LEN + 4;
-    mbuf_size = ROUNDUP(mtu_size, 1024) + RTE_PKTMBUF_HEADROOM;
-    SCLogConfig("%s: creating packet mbuf pool %s of size %d, cache size %d, mbuf size %d",
-            iconf->iface, mempool_name, iconf->mempool_size, iconf->mempool_cache_size, mbuf_size);
 
-    iconf->pkt_mempool = rte_pktmbuf_pool_create(mempool_name, iconf->mempool_size,
-            iconf->mempool_cache_size, 0, mbuf_size, (int)iconf->socket_id);
-    if (iconf->pkt_mempool == NULL) {
-        retval = -rte_errno;
-        SCLogError("%s: rte_pktmbuf_pool_create failed with code %d (mempool: %s): %s",
-                iconf->iface, rte_errno, mempool_name, rte_strerror(rte_errno));
-        SCReturnInt(retval);
+    SCLogNotice("Creating %d mempools", iconf->threads);
+    for (int i = 0; i < iconf->threads; i++) {
+        char mempool_name[64];
+        snprintf(mempool_name, 64, "mempoolid%d_%.20s", i, iconf->iface);
+        // +4 for VLAN header
+        mtu_size = iconf->mtu + RTE_ETHER_CRC_LEN + RTE_ETHER_HDR_LEN + 4;
+        mbuf_size = ROUNDUP(mtu_size, 1024) + RTE_PKTMBUF_HEADROOM;
+        uint32_t q_mp_sz = NEXT_POW2((iconf->mempool_size + iconf->nb_rx_queues - 1) / iconf->nb_rx_queues) - 1;
+        uint32_t q_mp_cache_sz = MempoolCacheSizeCalculate(q_mp_sz);
+        SCLogNotice("%s: creating packet mbuf pool %s of size %d, cache size %d, mbuf size %d",
+                iconf->iface, mempool_name, q_mp_sz, q_mp_cache_sz, mbuf_size);
+
+        iconf->pkt_mempool[i] = rte_pktmbuf_pool_create(mempool_name, q_mp_sz,
+                q_mp_cache_sz, 0, mbuf_size, (int)iconf->socket_id);
+        if (iconf->pkt_mempool[i] == NULL) {
+            retval = -rte_errno;
+            SCLogError("%s: rte_pktmbuf_pool_create failed with code %d (mempool: %s) - %s",
+                    iconf->iface, rte_errno, mempool_name, rte_strerror(rte_errno));
+            SCReturnInt(retval);
+        }
     }
 
     for (uint16_t queue_id = 0; queue_id < iconf->nb_rx_queues; queue_id++) {
@@ -1259,11 +1125,12 @@ static int DeviceConfigureQueues(DPDKIfaceConfig *iconf, const struct rte_eth_de
                 rxq_conf.rx_free_thresh, rxq_conf.rx_drop_en);
 
         retval = rte_eth_rx_queue_setup(iconf->port_id, queue_id, iconf->nb_rx_desc,
-                iconf->socket_id, &rxq_conf, iconf->pkt_mempool);
+                iconf->socket_id, &rxq_conf, iconf->pkt_mempool[queue_id]);
         if (retval < 0) {
-            rte_mempool_free(iconf->pkt_mempool);
-            SCLogError("%s: failed to setup RX queue %u: %s", iconf->iface, queue_id,
-                    rte_strerror(-retval));
+            rte_mempool_free(iconf->pkt_mempool[queue_id]);
+            SCLogError(
+                    "%s: rte_eth_rx_queue_setup failed with code %d for device queue %u of port %u",
+                    iconf->iface, retval, queue_id, iconf->port_id);
             SCReturnInt(retval);
         }
     }
@@ -1281,15 +1148,18 @@ static int DeviceConfigureQueues(DPDKIfaceConfig *iconf, const struct rte_eth_de
         retval = rte_eth_tx_queue_setup(
                 iconf->port_id, queue_id, iconf->nb_tx_desc, iconf->socket_id, &txq_conf);
         if (retval < 0) {
-            rte_mempool_free(iconf->pkt_mempool);
-            SCLogError("%s: failed to setup TX queue %u: %s", iconf->iface, queue_id,
-                    rte_strerror(-retval));
+            rte_mempool_free(iconf->pkt_mempool[queue_id]);
+            SCLogError(
+                    "%s: rte_eth_tx_queue_setup failed with code %d for device queue %u of port %u",
+                    iconf->iface, retval, queue_id, iconf->port_id);
             SCReturnInt(retval);
         }
     }
 
     SCReturnInt(0);
 }
+
+
 
 static int DeviceValidateOutIfaceConfig(DPDKIfaceConfig *iconf)
 {
@@ -1604,7 +1474,12 @@ static void *ParseDpdkConfigAndConfigureDevice(const char *iface)
     if (ldev_instance == NULL) {
         FatalError("Device %s is not registered as a live device", iface);
     }
-    ldev_instance->dpdk_vars.pkt_mp = iconf->pkt_mempool;
+    SCLogNotice("clearing size %" PRIu64 " elemsz %" PRIu64, sizeof(ldev_instance->dpdk_vars.pkt_mp), sizeof(ldev_instance->dpdk_vars.pkt_mp[0]));
+    memset(ldev_instance->dpdk_vars.pkt_mp, 0, sizeof(ldev_instance->dpdk_vars.pkt_mp));
+    for (int32_t i = 0; i < iconf->threads; i++) {
+        ldev_instance->dpdk_vars.pkt_mp[i] = iconf->pkt_mempool[i];
+    }
+
     return iconf;
 }
 
@@ -1715,7 +1590,7 @@ int RunModeIdsDpdkWorkers(void)
 
     TimeModeSetLive();
 
-    InitEal();
+    DPDKSetTimevalOfMachineStart(rte_get_tsc_hz());
     ret = RunModeSetLiveCaptureWorkers(ParseDpdkConfigAndConfigureDevice, DPDKConfigGetThreadsCount,
             "ReceiveDPDK", "DecodeDPDK", thread_name_workers, NULL);
     if (ret != 0) {

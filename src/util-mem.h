@@ -31,6 +31,9 @@
 #ifndef SURICATA_UTIL_MEM_H
 #define SURICATA_UTIL_MEM_H
 
+#include <stdlib.h>
+#include <rte_malloc.h>
+
 #if CPPCHECK==1 || defined(__clang_analyzer__)
 #define SCMalloc malloc
 #define SCCalloc calloc
@@ -41,7 +44,6 @@
 #define SCMallocAligned _mm_malloc
 #define SCFreeAligned _mm_free
 #else /* CPPCHECK */
-
 
 void *SCMallocFunc(const size_t sz);
 #define SCMalloc(sz) SCMallocFunc((sz))

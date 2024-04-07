@@ -265,7 +265,7 @@ static AppProto AppLayerProtoDetectPMMatchSignature(const AppLayerProtoDetectPMS
  */
 static inline int PMGetProtoInspect(AppLayerProtoDetectThreadCtx *tctx,
         AppLayerProtoDetectPMCtx *pm_ctx, MpmThreadCtx *mpm_tctx, Flow *f, const uint8_t *buf,
-        uint32_t buflen, uint8_t flags, AppProto *pm_results, bool *rflow)
+        uint32_t buflen, uint8_t flags, AppProto *pm_results, bool *rflow, Packet *p_notused)
 {
     int pm_matches = 0;
 
@@ -276,7 +276,7 @@ static inline int PMGetProtoInspect(AppLayerProtoDetectThreadCtx *tctx,
     /* do the mpm search */
     uint32_t search_cnt = mpm_table[pm_ctx->mpm_ctx.mpm_type].Search(
             &pm_ctx->mpm_ctx, mpm_tctx, &tctx->pmq,
-            buf, searchlen);
+            buf, searchlen, NULL);
     if (search_cnt == 0) {
         if (buflen >= pm_ctx->mpm_ctx.maxdepth)
             return -1;
@@ -318,7 +318,7 @@ static inline int PMGetProtoInspect(AppLayerProtoDetectThreadCtx *tctx,
  *  \param direction direction for the patterns
  *  \param pm_results[out] AppProto array of size ALPROTO_MAX */
 static AppProto AppLayerProtoDetectPMGetProto(AppLayerProtoDetectThreadCtx *tctx, Flow *f,
-        const uint8_t *buf, uint32_t buflen, uint8_t flags, AppProto *pm_results, bool *rflow)
+        const uint8_t *buf, uint32_t buflen, uint8_t flags, AppProto *pm_results, bool *rflow, Packet *p_notused)
 {
     SCEnter();
 
@@ -341,7 +341,7 @@ static AppProto AppLayerProtoDetectPMGetProto(AppLayerProtoDetectThreadCtx *tctx
         mpm_tctx = &tctx->mpm_tctx[f->protomap][1];
     }
     if (likely(pm_ctx->mpm_ctx.pattern_cnt > 0)) {
-        m = PMGetProtoInspect(tctx, pm_ctx, mpm_tctx, f, buf, buflen, flags, pm_results, rflow);
+        m = PMGetProtoInspect(tctx, pm_ctx, mpm_tctx, f, buf, buflen, flags, pm_results, rflow, NULL);
     }
     /* pattern found, yay */
     if (m > 0) {
@@ -375,7 +375,7 @@ static AppProto AppLayerProtoDetectPMGetProto(AppLayerProtoDetectThreadCtx *tctx
         int om = -1;
         if (likely(pm_ctx->mpm_ctx.pattern_cnt > 0)) {
             om = PMGetProtoInspect(
-                    tctx, pm_ctx, mpm_tctx, f, buf, buflen, flags, pm_results, rflow);
+                    tctx, pm_ctx, mpm_tctx, f, buf, buflen, flags, pm_results, rflow, NULL);
         }
         /* found! */
         if (om > 0) {
@@ -1417,7 +1417,7 @@ static int AppLayerProtoDetectPMRegisterPattern(uint8_t ipproto, AppProto alprot
 /***** Protocol Retrieval *****/
 
 AppProto AppLayerProtoDetectGetProto(AppLayerProtoDetectThreadCtx *tctx, Flow *f,
-        const uint8_t *buf, uint32_t buflen, uint8_t ipproto, uint8_t flags, bool *reverse_flow)
+        const uint8_t *buf, uint32_t buflen, uint8_t ipproto, uint8_t flags, bool *reverse_flow, Packet *p_notused)
 {
     SCEnter();
     SCLogDebug("buflen %u for %s direction", buflen,
@@ -1429,7 +1429,7 @@ AppProto AppLayerProtoDetectGetProto(AppLayerProtoDetectThreadCtx *tctx, Flow *f
     if (!FLOW_IS_PM_DONE(f, flags)) {
         AppProto pm_results[ALPROTO_MAX];
         uint16_t pm_matches = AppLayerProtoDetectPMGetProto(
-                tctx, f, buf, buflen, flags, pm_results, reverse_flow);
+                tctx, f, buf, buflen, flags, pm_results, reverse_flow, NULL);
         if (pm_matches > 0) {
             DEBUG_VALIDATE_BUG_ON(pm_matches > 1);
             alproto = pm_results[0];

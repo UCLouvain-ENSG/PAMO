@@ -49,29 +49,35 @@
 #include "util-validate.h"
 #include "util-profiling.h"
 #include "util-mpm-ac.h"
+#include "util-mpm-rxp.h"
 
 struct StreamMpmData {
     DetectEngineThreadCtx *det_ctx;
     const MpmCtx *mpm_ctx;
 };
 
+thread_local uint64_t g_stream_mpm_calls = 0;
+
+// This function is using Hyperscan - setting the usual "detctx.pmq" as &p->stream_data.pmq to use Hyperscan use
 static int StreamMpmFunc(
-        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset)
+        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset, Packet *p)
 {
     struct StreamMpmData *smd = cb_data;
+    g_stream_mpm_calls++;
     if (data_len >= smd->mpm_ctx->minlen) {
 #ifdef DEBUG
         smd->det_ctx->stream_mpm_cnt++;
         smd->det_ctx->stream_mpm_size += data_len;
 #endif
         (void)mpm_table[smd->mpm_ctx->mpm_type].Search(
-                smd->mpm_ctx, &smd->det_ctx->mtc, &smd->det_ctx->pmq, data, data_len);
+                // to force use of HS, we fill out PMQ arg and NULL pkt
+                smd->mpm_ctx, &smd->det_ctx->mtc, &p->stream_data.pmq, data, data_len, NULL);
         PREFILTER_PROFILING_ADD_BYTES(smd->det_ctx, data_len);
     }
     return 0;
 }
 
-static void PrefilterPktStream(DetectEngineThreadCtx *det_ctx,
+__attribute__((noinline)) void doPrefilterPktStream(DetectEngineThreadCtx *det_ctx,
         Packet *p, const void *pectx)
 {
     SCEnter();
@@ -80,6 +86,8 @@ static void PrefilterPktStream(DetectEngineThreadCtx *det_ctx,
 
     /* for established packets inspect any stream we may have queued up */
     if (p->flags & PKT_DETECT_HAS_STREAMDATA) {
+        if (g_rxp_ops_idx > 0) // it's going to take time here so we flush early
+            rxp_flush_buffer(&det_ctx->mtc);
         SCLogDebug("PRE det_ctx->raw_stream_progress %"PRIu64,
                 det_ctx->raw_stream_progress);
         struct StreamMpmData stream_mpm_data = { det_ctx, mpm_ctx };
@@ -98,12 +106,25 @@ static void PrefilterPktStream(DetectEngineThreadCtx *det_ctx,
             det_ctx->payload_mpm_cnt++;
             det_ctx->payload_mpm_size += p->payload_len;
 #endif
-            (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
-                    &det_ctx->mtc, &det_ctx->pmq,
-                    p->payload, p->payload_len);
+            if (mpm_chosen_matcher != MPM_RXP || p->dpdk_v.mbuf == NULL ) {
+                if (g_rxp_ops_idx > 0)
+                    rxp_flush_buffer(&det_ctx->mtc);
+                // Not using RXP because this is not DPDK-based packet - likely a pseudo packet
+                (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
+                    &det_ctx->mtc, &p->stream_data.pmq, p->payload, p->payload_len, NULL);
+            } else {
+                (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
+                    &det_ctx->mtc, NULL,
+                    (const uint8_t *)p->dpdk_v.mbuf, p->payload_len, p);
+            }
             PREFILTER_PROFILING_ADD_BYTES(det_ctx, p->payload_len);
         }
     }
+}
+
+void PrefilterPktStream(DetectEngineThreadCtx *det_ctx,
+    Packet *p, const void *pectx) {
+        doPrefilterPktStream(det_ctx,p,pectx);
 }
 
 int PrefilterPktStreamRegister(DetectEngineCtx *de_ctx,
@@ -113,7 +134,8 @@ int PrefilterPktStreamRegister(DetectEngineCtx *de_ctx,
             PrefilterPktStream, mpm_ctx, NULL, "stream");
 }
 
-static void PrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
+
+__attribute__((noinline)) void doPrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
         Packet *p, const void *pectx)
 {
     SCEnter();
@@ -122,11 +144,22 @@ static void PrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
     if (p->payload_len < mpm_ctx->minlen)
         SCReturn;
 
-    (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
-            &det_ctx->mtc, &det_ctx->pmq,
-            p->payload, p->payload_len);
+    if (mpm_chosen_matcher != MPM_RXP || p->dpdk_v.mbuf == NULL) {
+        // Not using RXP because this is not DPDK-based packet - likely a pseudo packet
+        (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
+            &det_ctx->mtc, &p->stream_data.pmq, p->payload, p->payload_len, NULL);
+    } else {
+        (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
+            &det_ctx->mtc, NULL,
+            (const uint8_t *)p->dpdk_v.mbuf, p->payload_len, p);
+    }
 
     PREFILTER_PROFILING_ADD_BYTES(det_ctx, p->payload_len);
+}
+
+void PrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
+    Packet *p, const void *pectx) {
+        doPrefilterPktPayload(det_ctx, p, pectx);
 }
 
 int PrefilterPktPayloadRegister(DetectEngineCtx *de_ctx,
@@ -213,7 +246,7 @@ struct StreamContentInspectData {
 };
 
 static int StreamContentInspectFunc(
-        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset)
+        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset, Packet *p)
 {
     SCEnter();
     struct StreamContentInspectData *smd = cb_data;
@@ -268,7 +301,7 @@ struct StreamContentInspectEngineData {
 };
 
 static int StreamContentInspectEngineFunc(
-        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset)
+        void *cb_data, const uint8_t *data, const uint32_t data_len, const uint64_t _offset, Packet *p)
 {
     SCEnter();
     struct StreamContentInspectEngineData *smd = cb_data;

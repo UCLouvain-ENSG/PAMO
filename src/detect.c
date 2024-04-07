@@ -67,13 +67,8 @@
 
 #include "action-globals.h"
 
-typedef struct DetectRunScratchpad {
-    const AppProto alproto;
-    const uint8_t flow_flags; /* flow/state flags: STREAM_* */
-    const bool app_decoder_events;
-    const SigGroupHead *sgh;
-    SignatureMask pkt_mask;
-} DetectRunScratchpad;
+#include <rte_regexdev.h>
+#include "util-mpm-rxp.h"
 
 /* prototypes */
 static DetectRunScratchpad DetectRunSetup(const DetectEngineCtx *de_ctx,
@@ -82,7 +77,10 @@ static void DetectRunInspectIPOnly(ThreadVars *tv, const DetectEngineCtx *de_ctx
         DetectEngineThreadCtx *det_ctx, Flow * const pflow, Packet * const p);
 static inline void DetectRunGetRuleGroup(const DetectEngineCtx *de_ctx,
         Packet * const p, Flow * const pflow, DetectRunScratchpad *scratch);
-static inline void DetectRunPrefilterPkt(ThreadVars *tv,
+
+static inline void DetectRunPrefilterPktTH(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh,
+    Packet *p, const uint8_t flags);
+static inline void DetectRunPrefilterPktBH(ThreadVars *tv,
         DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx, Packet *p,
         DetectRunScratchpad *scratch);
 static inline void DetectRulePacketRules(ThreadVars * const tv,
@@ -100,6 +98,7 @@ static void DetectRunCleanup(DetectEngineThreadCtx *det_ctx,
         Packet *p, Flow * const pflow);
 
 /** \internal
+ * flow is locked since call in FlowWorker
  */
 static void DetectRun(ThreadVars *th_v,
         DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
@@ -124,7 +123,8 @@ static void DetectRun(ThreadVars *th_v,
     DetectRunScratchpad scratch = DetectRunSetup(de_ctx, det_ctx, p, pflow);
 
     /* run the IPonly engine */
-    DetectRunInspectIPOnly(th_v, de_ctx, det_ctx, pflow, p);
+    if (!p->rxp.rxp_results)
+        DetectRunInspectIPOnly(th_v, de_ctx, det_ctx, pflow, p);
 
     /* get our rule group */
     DetectRunGetRuleGroup(de_ctx, p, pflow, &scratch);
@@ -134,9 +134,15 @@ static void DetectRun(ThreadVars *th_v,
         SCLogDebug("no sgh for this packet, nothing to match against");
         goto end;
     }
-
     /* run the prefilters for packets */
-    DetectRunPrefilterPkt(th_v, de_ctx, det_ctx, p, &scratch);
+    if (!p->rxp.rxp_results) {
+        DetectRunPrefilterPktTH(det_ctx, scratch.sgh, p, scratch.flow_flags);
+        if (p->rxp.async_in_progress) {
+            DetectRunCleanup(det_ctx, p, pflow);
+            SCReturn;
+        }
+    }
+    DetectRunPrefilterPktBH(th_v, de_ctx, det_ctx, p, &scratch);
 
     PACKET_PROFILING_DETECT_START(p, PROF_DETECT_RULES);
     /* inspect the rules against the packet */
@@ -260,12 +266,13 @@ const SigGroupHead *SigMatchSignaturesGetSgh(const DetectEngineCtx *de_ctx,
 }
 
 static inline void DetectPrefilterMergeSort(DetectEngineCtx *de_ctx,
-                                            DetectEngineThreadCtx *det_ctx)
+                                            DetectEngineThreadCtx *det_ctx,
+                                            Packet *p)
 {
     SigIntId mpm, nonmpm;
-    SigIntId *mpm_ptr = det_ctx->pmq.rule_id_array;
+    SigIntId *mpm_ptr = p->stream_data.pmq.rule_id_array;
     SigIntId *nonmpm_ptr = det_ctx->non_pf_id_array;
-    uint32_t m_cnt = det_ctx->pmq.rule_id_array_cnt;
+    uint32_t m_cnt = p->stream_data.pmq.rule_id_array_cnt;
     uint32_t n_cnt = det_ctx->non_pf_id_cnt;
     SigIntId *final_ptr;
     uint32_t final_cnt;
@@ -379,7 +386,7 @@ static inline void DetectPrefilterMergeSort(DetectEngineCtx *de_ctx,
 
     det_ctx->match_array_cnt = match_array - det_ctx->match_array;
     DEBUG_VALIDATE_BUG_ON((det_ctx->pmq.rule_id_array_cnt + det_ctx->non_pf_id_cnt) < det_ctx->match_array_cnt);
-    PMQ_RESET(&det_ctx->pmq);
+    PMQ_RESET(&p->stream_data.pmq);
 }
 
 /** \internal
@@ -671,10 +678,18 @@ static inline bool DetectRunInspectRuleHeader(const Packet *p, const Flow *f, co
     return true;
 }
 
+static inline void DetectRunPrefilterPktTH(
+    DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh,
+    Packet *p, const uint8_t flags
+)
+{
+        Prefilter(det_ctx, sgh, p, flags);
+}
+
 /** \internal
  *  \brief run packet/stream prefilter engines
  */
-static inline void DetectRunPrefilterPkt(
+static inline void DetectRunPrefilterPktBH(
     ThreadVars *tv,
     DetectEngineCtx *de_ctx,
     DetectEngineThreadCtx *det_ctx,
@@ -695,17 +710,15 @@ static inline void DetectRunPrefilterPkt(
     }
     PACKET_PROFILING_DETECT_END(p, PROF_DETECT_NONMPMLIST);
 
-    /* run the prefilter engines */
-    Prefilter(det_ctx, scratch->sgh, p, scratch->flow_flags);
     /* create match list if we have non-pf and/or pf */
-    if (det_ctx->non_pf_store_cnt || det_ctx->pmq.rule_id_array_cnt) {
+    if (det_ctx->non_pf_store_cnt || p->stream_data.pmq.rule_id_array_cnt) {
 #ifdef PROFILING
         if (tv) {
-            StatsAddUI64(tv, det_ctx->counter_mpm_list, (uint64_t)det_ctx->pmq.rule_id_array_cnt);
+            StatsAddUI64(tv, det_ctx->counter_mpm_list, (uint64_t)p->stream_data.pmq.rule_id_array_cnt);
         }
 #endif
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_PF_SORT2);
-        DetectPrefilterMergeSort(de_ctx, det_ctx);
+        DetectPrefilterMergeSort(de_ctx, det_ctx, p);
         PACKET_PROFILING_DETECT_END(p, PROF_DETECT_PF_SORT2);
     }
 
@@ -1626,7 +1639,11 @@ static void DetectRunFrames(ThreadVars *tv, DetectEngineCtx *de_ctx, DetectEngin
     }
 
     for (uint32_t idx = 0; idx < frames->cnt; idx++) {
-        SCLogDebug("frame %u", idx);
+        SCLogNotice("frame %u", idx);
+        // this notice says that Frames are actually being used.
+        // this means you either can just comment out this part of the code
+        // ask someone how it is used
+        // design async for Frames as well
         Frame *frame = FrameGetByIndex(frames, idx);
         if (frame == NULL) {
             continue;
@@ -1641,6 +1658,7 @@ static void DetectRunFrames(ThreadVars *tv, DetectEngineCtx *de_ctx, DetectEngin
             //            PACKET_PROFILING_DETECT_START(p, PROF_DETECT_PF_TX);
             DetectRunPrefilterFrame(det_ctx, sgh, p, frames, frame, alproto);
             //            PACKET_PROFILING_DETECT_END(p, PROF_DETECT_PF_TX);
+
             SCLogDebug("%p/%" PRIi64 " rules added from prefilter: %u candidates", frame, frame->id,
                     det_ctx->pmq.rule_id_array_cnt);
 

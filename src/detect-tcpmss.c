@@ -152,7 +152,7 @@ PrefilterPacketTcpmssMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const void
      * that these will be inspected further */
     if (DetectU16Match(ptcpmss, &du16)) {
         SCLogDebug("packet matches tcpmss/hl %u", ptcpmss);
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

@@ -292,6 +292,9 @@ static int DetectFastPatternSetup(DetectEngineCtx *de_ctx, Signature *s, const c
                        "modifiers like distance, within, offset, depth");
             goto error;
         }
+        if (cd->content_len < 2 && cd->flags & (DETECT_CONTENT_FAST_PATTERN | DETECT_CONTENT_FAST_PATTERN_CHOP | DETECT_CONTENT_FAST_PATTERN_ONLY)) {
+            SCLogError("Content short and fast pattern, signature SID: %u", s->id);
+        }
         cd->flags |= DETECT_CONTENT_FAST_PATTERN_ONLY;
 
         /* fast pattern chop */
@@ -354,6 +357,9 @@ static int DetectFastPatternSetup(DetectEngineCtx *de_ctx, Signature *s, const c
     cd->flags |= DETECT_CONTENT_FAST_PATTERN;
 
     pcre2_match_data_free(match);
+    if (cd->content_len < 2 && cd->flags & (DETECT_CONTENT_FAST_PATTERN | DETECT_CONTENT_FAST_PATTERN_CHOP | DETECT_CONTENT_FAST_PATTERN_ONLY)) {
+        SCLogError("Content short and fast pattern, signature SID: %u", s->id);
+    }
     return 0;
 
  error:

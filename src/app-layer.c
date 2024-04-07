@@ -370,7 +370,7 @@ static int TCPProtoDetect(ThreadVars *tv, TcpReassemblyThreadCtx *ra_ctx,
     PACKET_PROFILING_APP_PD_START(app_tctx);
     *alproto = AppLayerProtoDetectGetProto(app_tctx->alpd_tctx,
             f, data, data_len,
-            IPPROTO_TCP, flags, &reverse_flow);
+            IPPROTO_TCP, flags, &reverse_flow, NULL);
     PACKET_PROFILING_APP_PD_END(app_tctx);
     SCLogDebug("alproto %u rev %s", *alproto, reverse_flow ? "true" : "false");
 
@@ -850,7 +850,7 @@ int AppLayerHandleUdp(ThreadVars *tv, AppLayerThreadCtx *tctx, Packet *p, Flow *
         bool reverse_flow = false;
         PACKET_PROFILING_APP_PD_START(tctx);
         *alproto = AppLayerProtoDetectGetProto(
-                tctx->alpd_tctx, f, p->payload, p->payload_len, IPPROTO_UDP, flags, &reverse_flow);
+                tctx->alpd_tctx, f, p->payload, p->payload_len, IPPROTO_UDP, flags, &reverse_flow, NULL);
         PACKET_PROFILING_APP_PD_END(tctx);
 
         switch (*alproto) {

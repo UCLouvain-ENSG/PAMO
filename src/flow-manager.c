@@ -47,6 +47,7 @@
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
 #include "util-device.h"
+#include "util-dpdk.h"
 
 #include "util-debug.h"
 
@@ -277,6 +278,25 @@ typedef struct FlowManagerTimeoutThread {
     FlowQueuePrivate aside_queue;
 } FlowManagerTimeoutThread;
 
+/**
+ * ProcessAsideQueue - Processes flows in the "aside" queue as part of timeout handling.
+ *
+ * This function is invoked within the Flow Manager Timeout Thread's routine to examine and process
+ * flows that have been deferred for later handling (i.e., placed in the aside queue). During its execution,
+ * it iterates through the aside queue to update the timeout counters, manage flow state transitions, and
+ * perform any required cleanup of flows that have exceeded their timeout thresholds.
+ *
+ * It is called from the central timeout processing loop of the flow manager, typically when the thread
+ * responsible for handling flow timeouts determines that the aside queue contains pending flows needing attention.
+ *
+ * Parameters:
+ *   td       - A pointer to the FlowManagerTimeoutThread structure, representing the current thread context.
+ *   counters - A pointer to the FlowTimeoutCounters structure where the function should update flow timeout statistics.
+ *
+ * Return:
+ *   A uint32_t value that indicates the result of the processing. This may represent the number of flows processed,
+ *   or a status flag defined by the implementation.
+ */
 static uint32_t ProcessAsideQueue(FlowManagerTimeoutThread *td, FlowTimeoutCounters *counters)
 {
     FlowQueuePrivate recycle = { NULL, NULL, 0 };
@@ -318,6 +338,8 @@ static uint32_t ProcessAsideQueue(FlowManagerTimeoutThread *td, FlowTimeoutCount
  *  \internal
  *
  *  \brief check all flows in a hash row for timing out
+ *
+ * Called by the flow manager thread, with a lock on the hash row
  *
  *  \param f last flow in the hash row
  *  \param ts timestamp
@@ -378,6 +400,14 @@ static void FlowManagerHashRowTimeout(FlowManagerTimeoutThread *td, Flow *f, SCT
         counters->rows_maxlen = checked;
 }
 
+/**
+ * @brief Called by the flow manager
+ *
+ * @param td
+ * @param f
+ * @param ts
+ * @param counters
+ */
 static void FlowManagerHashRowClearEvictedList(
         FlowManagerTimeoutThread *td, Flow *f, SCTime_t ts, FlowTimeoutCounters *counters)
 {
@@ -396,6 +426,8 @@ static void FlowManagerHashRowClearEvictedList(
 
 /**
  *  \brief time out flows from the hash
+ *
+ *  Called by the the Flow Manager (seperate threads from the workers)
  *
  *  \param ts timestamp
  *  \param hash_min min hash index to consider
@@ -756,6 +788,7 @@ static void GetWorkUnitSizing(const uint32_t rows, const uint32_t mp, const bool
     *rows_sec = rows_per_sec;
 }
 
+
 /** \brief Thread that manages the flow table and times out flows.
  *
  *  \param td ThreadVars cast to void ptr
@@ -785,6 +818,7 @@ static TmEcode FlowManager(ThreadVars *th_v, void *thread_data)
         usleep(10);
     }
 
+
     uint32_t mp = MemcapsGetPressure() * 100;
     if (ftd->instance == 0) {
         StatsSetUI64(th_v, ftd->cnt.memcap_pressure, mp);
@@ -802,6 +836,8 @@ static TmEcode FlowManager(ThreadVars *th_v, void *thread_data)
             TmThreadTestThreadUnPaused(th_v);
             TmThreadsUnsetFlag(th_v, THV_PAUSED);
         }
+
+        DPDKLoadBalance();
 
         bool emerg = ((SC_ATOMIC_GET(flow_flags) & FLOW_EMERGENCY) != 0);
 

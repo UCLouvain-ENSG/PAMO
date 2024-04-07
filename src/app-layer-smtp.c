@@ -171,7 +171,7 @@ typedef struct SMTPThreadCtx_ {
     PrefilterRuleStore *pmq;
 } SMTPThreadCtx;
 
-#define SMTP_MPM mpm_default_matcher
+#define SMTP_MPM mpm_chosen_matcher
 
 static MpmCtx *smtp_mpm_ctx = NULL;
 
@@ -943,7 +943,7 @@ static int SMTPProcessReply(SMTPState *state, Flow *f, AppLayerParserState *psta
      * should make the use of the mpm very efficient */
     PmqReset(td->pmq);
     int mpm_cnt = mpm_table[SMTP_MPM].Search(
-            smtp_mpm_ctx, td->smtp_mpm_thread_ctx, td->pmq, line->buf, 3);
+            smtp_mpm_ctx, td->smtp_mpm_thread_ctx, td->pmq, line->buf, 3, NULL);
     if (mpm_cnt == 0) {
         /* set decoder event - reply code invalid */
         SMTPSetEvent(state, SMTP_DECODER_EVENT_INVALID_REPLY);

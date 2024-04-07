@@ -42,6 +42,7 @@ typedef struct StatsTable_ {
     uint32_t nstats;        /**< size in records of 'stats' */
     uint32_t ntstats;       /**< number of threads for which tstats stores stats */
     time_t start_time;
+    struct timeval process_start_time;
     struct timeval ts;
 } StatsTable;
 

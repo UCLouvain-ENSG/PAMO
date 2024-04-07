@@ -46,6 +46,7 @@
 
 #include "util-hash-lookup3.h"
 
+#include "util-atomic.h"
 #include "conf.h"
 #include "output.h"
 #include "output-flow.h"
@@ -520,7 +521,10 @@ static inline int FlowCompareESP(Flow *f, const Packet *p)
 void FlowSetupPacket(Packet *p)
 {
     p->flags |= PKT_WANTS_FLOW;
-    p->flow_hash = FlowGetHash(p);
+#if HAVE_RSS_FLOW_HASH
+    if (!p->flow_hash)
+#endif
+        p->flow_hash = FlowGetHash(p);
 }
 
 static inline int FlowCompare(Flow *f, const Packet *p)
@@ -725,6 +729,7 @@ static Flow *FlowGetNew(ThreadVars *tv, FlowLookupStruct *fls, Packet *p)
         /* flow is initialized (recycled) but *unlocked* */
     }
 
+    FLOWLOCK_SET_OWNER(f);
     FLOWLOCK_WRLOCK(f);
     FlowUpdateCounter(tv, fls->dtv, p->proto);
     return f;
@@ -740,6 +745,7 @@ static Flow *TcpReuseReplace(ThreadVars *tv, FlowLookupStruct *fls, FlowBucket *
 #ifdef UNITTESTS
     }
 #endif
+
     /* time out immediately */
     old_f->timeout_at = 0;
     /* get some settings that we move over to the new flow */
@@ -1078,6 +1084,11 @@ Flow *FlowGetFromFlowKey(FlowKey *key, struct timespec *ttime, const uint32_t ha
     FLOWLOCK_WRLOCK(f);
     FBLOCK_UNLOCK(fb);
     return f;
+}
+
+void FlowPrefetch(const uint32_t hash) {
+    FlowBucket *fb = &flow_hash[hash % flow_config.hash_size];
+    rte_prefetch0(fb);
 }
 
 #define FLOW_GET_NEW_TRIES 5

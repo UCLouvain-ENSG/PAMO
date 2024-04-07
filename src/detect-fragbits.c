@@ -334,7 +334,7 @@ PrefilterPacketFragBitsMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const vo
 
     if (FragBitsMatch(fragbits, ctx->v1.u8[0], ctx->v1.u8[1]))
     {
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

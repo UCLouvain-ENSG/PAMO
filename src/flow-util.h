@@ -33,6 +33,7 @@
         (f)->tosrcpktcnt = 0;                                                                      \
         (f)->todstbytecnt = 0;                                                                     \
         (f)->tosrcbytecnt = 0;                                                                     \
+        (f)->rxp_async_ops = 0;                                                                    \
     } while (0)
 
 #define FLOW_INITIALIZE(f)                                                                         \

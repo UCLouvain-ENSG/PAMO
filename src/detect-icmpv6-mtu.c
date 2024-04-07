@@ -160,7 +160,7 @@ PrefilterPacketIcmpv6mtuMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const v
     if (DetectU32Match(picmpv6mtu, &du32))
     {
         SCLogDebug("packet matches icmpv6.mtu/hl %u", picmpv6mtu);
-        PrefilterAddSids(&det_ctx->pmq, ctx->sigs_array, ctx->sigs_cnt);
+        PrefilterAddSids(&p->stream_data.pmq, ctx->sigs_array, ctx->sigs_cnt);
     }
 }
 

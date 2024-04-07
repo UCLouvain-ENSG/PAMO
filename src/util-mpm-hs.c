@@ -57,7 +57,7 @@ int SCHSAddPatternCS(MpmCtx *, uint8_t *, uint16_t, uint16_t, uint16_t,
                      uint32_t, SigIntId, uint8_t);
 int SCHSPreparePatterns(MpmCtx *mpm_ctx);
 uint32_t SCHSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
-                    PrefilterRuleStore *pmq, const uint8_t *buf, const uint32_t buflen);
+                    PrefilterRuleStore *pmq, const uint8_t *buf, const uint32_t buflen, Packet *p);
 void SCHSPrintInfo(MpmCtx *mpm_ctx);
 void SCHSPrintSearchStats(MpmThreadCtx *mpm_thread_ctx);
 #ifdef UNITTESTS
@@ -570,6 +570,137 @@ static PatternDatabase *PatternDatabaseAlloc(uint32_t pattern_cnt)
     return pd;
 }
 
+static const char *HSCacheConstructFPath(uint32_t hs_db_hash) {
+    static char hash_filepath[2048];
+    char hash_file_path_prefix_path[] = "/tmp/";
+    char hash_file_path_suffix[] = "_v1.hs.bin";
+    uint16_t hash_file_bytes_written = 0;
+    snprintf(hash_filepath, sizeof(hash_filepath), "%s", hash_file_path_prefix_path);
+    hash_file_bytes_written += sizeof(hash_file_path_prefix_path) - 1;
+    
+    snprintf(hash_filepath + hash_file_bytes_written,
+                sizeof(hash_filepath) - hash_file_bytes_written, "%010u", hs_db_hash);
+    hash_file_bytes_written += 10;
+    
+    snprintf(hash_filepath + hash_file_bytes_written,
+            sizeof(hash_filepath) - hash_file_bytes_written, "%s", hash_file_path_suffix);
+    hash_file_bytes_written += sizeof(hash_file_path_suffix) - 1;
+    return hash_filepath;
+}
+
+static char *HSReadStream(const char *filePath, size_t *bufferSize) {
+    FILE *file = fopen(filePath, "rb");
+    if (!file) {
+        perror("Failed to open file");
+        return NULL;
+    }
+
+    // Seek to the end of the file to determine its size
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    if (fileSize < 0) {
+        perror("Failed to determine file size");
+        fclose(file);
+        return NULL;
+    }
+
+    // Allocate a buffer to hold the entire file
+    char *buffer = (char *)malloc(fileSize);
+    if (!buffer) {
+        perror("Failed to allocate memory");
+        fclose(file);
+        return NULL;
+    }
+
+    // Rewind file pointer and read the file into the buffer
+    rewind(file);
+    size_t bytesRead = fread(buffer, 1, fileSize, file);
+    if (bytesRead != (size_t)fileSize) {
+        perror("Failed to read the entire file");
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+
+    *bufferSize = fileSize;
+    fclose(file);
+    return buffer;
+}
+
+
+static int HSLoadCache(hs_database_t **hs_db, uint32_t hs_db_hash) {
+    int ret = -1;
+    const char *hash_file_static = HSCacheConstructFPath(hs_db_hash);
+    SCLogDebug("Loading the cached HS DB from %s", hash_file_static);
+
+    FILE *db_cache = fopen(hash_file_static, "r");
+    char *buffer = NULL;
+    if (db_cache) {
+        size_t bufferSize;
+        buffer = HSReadStream(hash_file_static, &bufferSize);
+        if (!buffer) {
+            SCLogWarning("Hyperscan cached DB file %s cannot be read", hash_file_static);
+            ret = -1;
+            goto freeup;
+        }
+
+        hs_error_t error = hs_deserialize_database(buffer, bufferSize, hs_db);
+        if (error != HS_SUCCESS) {
+            SCLogWarning("Failed to deserialize Hyperscan database: %d", error);
+            ret = -1;
+            goto freeup;
+        }
+
+        ret = 0;
+        goto freeup;
+    }
+
+freeup:
+    if (db_cache)
+        fclose(db_cache);
+    if (buffer)
+        free(buffer);
+    return ret;
+}
+
+// first check if it is loaded already (basic check)
+// then check in files
+// then compile & save
+
+static int HSSaveCache(hs_database_t *hs_db, uint32_t hs_db_hash) {
+    char *db_stream;
+    size_t db_size;
+
+    hs_error_t err = hs_serialize_database(hs_db, &db_stream, &db_size);
+    if (err != HS_SUCCESS) {
+        SCLogWarning(
+                "Failed to serialize Hyperscan database: %d", err);
+        return -1;
+    }
+
+    const char *hash_file_static = HSCacheConstructFPath(hs_db_hash);
+    SCLogDebug("Caching the compiled HS at %s", hash_file_static);
+
+    FILE *db_cache_out = fopen(hash_file_static, "w");
+    if (!db_cache_out) {
+        SCLogWarning("Failed to open file: %s", hash_file_static);
+        return -1;
+    }
+    size_t wrote = fwrite(db_stream, sizeof(db_stream[0]), db_size, db_cache_out);
+    if (wrote != db_size) {
+        SCLogWarning("Failed to write to file: %s", hash_file_static);
+        return -1;
+    }
+    int ret = fclose(db_cache_out);
+    if (ret != 0) {
+        SCLogWarning("Failed to close file: %s", hash_file_static);
+        return -1;
+    }
+    free(db_stream);
+
+    return 0;
+}
+
 /**
  * \brief Process the patterns added to the mpm, and create the internal tables.
  *
@@ -633,6 +764,7 @@ int SCHSPreparePatterns(MpmCtx *mpm_ctx)
      * before, and reuse the Hyperscan database if so. */
     PatternDatabase *pd_cached = HashTableLookup(g_db_table, pd, 1);
 
+    uint32_t cached_hash = 0;
     if (pd_cached != NULL) {
         SCLogDebug("Reusing cached database %p with %" PRIu32
                    " patterns (ref_cnt=%" PRIu32 ")",
@@ -644,6 +776,49 @@ int SCHSPreparePatterns(MpmCtx *mpm_ctx)
         PatternDatabaseFree(pd);
         SCHSFreeCompileData(cd);
         return 0;
+    } else {
+        uint32_t hash = 0;
+        hash = hashword(&pd->pattern_cnt, 1, hash);
+
+        for (uint32_t i = 0; i < pd->pattern_cnt; i++) {
+            hash = SCHSPatternHash(pd->parray[i], hash);
+        }
+
+        cached_hash = hash;
+
+        int r = HSLoadCache(&pd->hs_db, cached_hash);
+        if (r == 0) {
+            pd->ref_cnt = 1;
+            ctx->pattern_db = pd;
+
+            SCMutexLock(&g_scratch_proto_mutex);
+            err = hs_alloc_scratch(pd->hs_db, &g_scratch_proto);
+            SCMutexUnlock(&g_scratch_proto_mutex);
+            if (err != HS_SUCCESS) {
+                SCLogError("failed to allocate scratch");
+                SCMutexUnlock(&g_db_table_mutex);
+                goto error;
+            }
+
+            err = hs_database_size(pd->hs_db, &ctx->hs_db_size);
+            if (err != HS_SUCCESS) {
+                SCLogError("failed to query database size");
+                SCMutexUnlock(&g_db_table_mutex);
+                goto error;
+            }
+
+            mpm_ctx->memory_cnt++;
+            mpm_ctx->memory_size += ctx->hs_db_size;
+
+
+            r = HashTableAdd(g_db_table, pd, 1);
+            SCMutexUnlock(&g_db_table_mutex);
+            if (r < 0)
+                goto error;
+
+            SCMutexUnlock(&g_db_table_mutex);
+            return 0;        
+        }
     }
 
     BUG_ON(ctx->pattern_db != NULL); /* already built? */
@@ -722,6 +897,10 @@ int SCHSPreparePatterns(MpmCtx *mpm_ctx)
     pd->ref_cnt = 1;
     int r = HashTableAdd(g_db_table, pd, 1);
     SCMutexUnlock(&g_db_table_mutex);
+    if (r < 0)
+        goto error;
+
+    r = HSSaveCache(pd->hs_db, cached_hash);
     if (r < 0)
         goto error;
 
@@ -917,7 +1096,7 @@ static int SCHSMatchEvent(unsigned int id, unsigned long long from,
  * \retval matches Match count.
  */
 uint32_t SCHSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
-                    PrefilterRuleStore *pmq, const uint8_t *buf, const uint32_t buflen)
+                    PrefilterRuleStore *pmq, const uint8_t *buf, const uint32_t buflen, Packet *p)
 {
     uint32_t ret = 0;
     SCHSCtx *ctx = (SCHSCtx *)mpm_ctx->ctx;
@@ -928,6 +1107,12 @@ uint32_t SCHSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
         return 0;
     }
 
+    if (pmq == NULL && p) {
+        pmq = &p->stream_data.pmq;
+    } else if (pmq == NULL && p == NULL) {
+        FatalError("both pmqs are null");
+    }
+
     SCHSCallbackCtx cctx = {.ctx = ctx, .pmq = pmq, .match_count = 0};
 
     /* scratch should have been cloned from g_scratch_proto at thread init. */
@@ -935,6 +1120,7 @@ uint32_t SCHSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
     BUG_ON(pd->hs_db == NULL);
     BUG_ON(scratch == NULL);
 
+    // SCLogNotice("Hyperscan search with %" PRIu32 " patterns on buf %p of length %d", pd->pattern_cnt, buf, buflen);
     hs_error_t err = hs_scan(pd->hs_db, (const char *)buf, buflen, 0, scratch,
                              SCHSMatchEvent, &cctx);
     if (err != HS_SUCCESS) {
@@ -946,6 +1132,7 @@ uint32_t SCHSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
     } else {
         ret = cctx.match_count;
     }
+    // SCLogNotice("Hyperscan search found %" PRIu32 " matches", ret);
 
     return ret;
 }
@@ -1110,7 +1297,7 @@ static int SCHSTest01(void)
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
 
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1143,7 +1330,7 @@ static int SCHSTest02(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1180,7 +1367,7 @@ static int SCHSTest03(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1214,7 +1401,7 @@ static int SCHSTest04(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1248,7 +1435,7 @@ static int SCHSTest05(void)
 
     const char *buf = "abcdefghjiklmnopqrstuvwxyz";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -1280,7 +1467,7 @@ static int SCHSTest06(void)
 
     const char *buf = "abcd";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1324,7 +1511,7 @@ static int SCHSTest07(void)
 
     const char *buf = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 6)
         result = 1;
@@ -1356,7 +1543,7 @@ static int SCHSTest08(void)
     SCHSInitThreadCtx(&mpm_ctx, &mpm_thread_ctx);
 
     uint32_t cnt =
-        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"a", 1);
+        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"a", 1, NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1388,7 +1575,7 @@ static int SCHSTest09(void)
     SCHSInitThreadCtx(&mpm_ctx, &mpm_thread_ctx);
 
     uint32_t cnt =
-        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"ab", 2);
+        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"ab", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1425,7 +1612,7 @@ static int SCHSTest10(void)
                 "01234567890123456789012345678901234567890123456789"
                 "01234567890123456789012345678901234567890123456789";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1468,16 +1655,16 @@ static int SCHSTest11(void)
 
     const char *buf = "he";
     result &= (SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 1);
+                          strlen(buf)) == 1, NULL);
     buf = "she";
     result &= (SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 2);
+                          strlen(buf)) == 2, NULL);
     buf = "his";
     result &= (SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 1);
+                          strlen(buf)) == 1, NULL);
     buf = "hers";
     result &= (SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                          strlen(buf)) == 2);
+                          strlen(buf)) == 2, NULL);
 
 end:
     SCHSDestroyCtx(&mpm_ctx);
@@ -1508,7 +1695,7 @@ static int SCHSTest12(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyz";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 2)
         result = 1;
@@ -1542,7 +1729,7 @@ static int SCHSTest13(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCD";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1576,7 +1763,7 @@ static int SCHSTest14(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCDE";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1610,7 +1797,7 @@ static int SCHSTest15(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABCDEF";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1644,7 +1831,7 @@ static int SCHSTest16(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzABC";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1678,7 +1865,7 @@ static int SCHSTest17(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyzAB";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1722,7 +1909,7 @@ static int SCHSTest18(void)
                 "uvwxy"
                 "z";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1756,7 +1943,7 @@ static int SCHSTest19(void)
 
     const char *buf = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1802,7 +1989,7 @@ static int SCHSTest20(void)
                 "AAAAA"
                 "AA";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1834,7 +2021,7 @@ static int SCHSTest21(void)
     SCHSInitThreadCtx(&mpm_ctx, &mpm_thread_ctx);
 
     uint32_t cnt =
-        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"AA", 2);
+        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"AA", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1869,7 +2056,7 @@ static int SCHSTest22(void)
 
     const char *buf = "abcdefghijklmnopqrstuvwxyz";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 2)
         result = 1;
@@ -1901,7 +2088,7 @@ static int SCHSTest23(void)
     SCHSInitThreadCtx(&mpm_ctx, &mpm_thread_ctx);
 
     uint32_t cnt =
-        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"aa", 2);
+        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"aa", 2, NULL);
 
     if (cnt == 0)
         result = 1;
@@ -1933,7 +2120,7 @@ static int SCHSTest24(void)
     SCHSInitThreadCtx(&mpm_ctx, &mpm_thread_ctx);
 
     uint32_t cnt =
-        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"aa", 2);
+        SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)"aa", 2, NULL);
 
     if (cnt == 1)
         result = 1;
@@ -1967,7 +2154,7 @@ static int SCHSTest25(void)
 
     const char *buf = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 3)
         result = 1;
@@ -2000,7 +2187,7 @@ static int SCHSTest26(void)
 
     const char *buf = "works";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 1)
         result = 1;
@@ -2033,7 +2220,7 @@ static int SCHSTest27(void)
 
     const char *buf = "tone";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;
@@ -2066,7 +2253,7 @@ static int SCHSTest28(void)
 
     const char *buf = "tONE";
     uint32_t cnt = SCHSSearch(&mpm_ctx, &mpm_thread_ctx, &pmq, (uint8_t *)buf,
-                              strlen(buf));
+                              strlen(buf), NULL);
 
     if (cnt == 0)
         result = 1;

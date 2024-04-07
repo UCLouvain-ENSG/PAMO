@@ -52,6 +52,7 @@ noinst_HEADERS = \
 	app-layer-ssl.h \
 	app-layer-tftp.h \
 	build-info.h \
+	biased.h \
 	conf.h \
 	conf-yaml-loader.h \
 	counters.h \
@@ -590,6 +591,7 @@ noinst_HEADERS = \
 	util-mpm-ac-ks.h \
 	util-mpm.h \
 	util-mpm-hs.h \
+	util-mpm-rxp.h \
 	util-napatech.h \
 	util-optimize.h \
 	util-pages.h \
@@ -676,6 +678,7 @@ libsuricata_c_a_SOURCES = \
 	app-layer-ssh.c \
 	app-layer-ssl.c \
 	app-layer-tftp.c \
+	biased.c \
 	conf.c \
 	conf-yaml-loader.c \
 	counters.c \
@@ -1198,6 +1201,7 @@ libsuricata_c_a_SOURCES = \
 	util-mpm-ac-ks-small.c \
 	util-mpm.c \
 	util-mpm-hs.c \
+	util-mpm-rxp.c \
 	util-napatech.c \
 	util-pages.c \
 	util-path.c \

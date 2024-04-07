@@ -57,6 +57,7 @@
 
 #include "util-profiling.h"
 #include "util-validate.h"
+#include "util-mpm-rxp.h"
 
 static int PrefilterStoreGetId(DetectEngineCtx *de_ctx,
         const char *name, void (*FreeFunc)(void *));
@@ -90,7 +91,7 @@ static inline void QuickSortSigIntId(SigIntId *sids, uint32_t n)
 /**
  * \brief run prefilter engines on a transaction
  */
-void DetectRunPrefilterTx(DetectEngineThreadCtx *det_ctx,
+__attribute__ ((noinline))  void DetectRunPrefilterTx(DetectEngineThreadCtx *det_ctx,
         const SigGroupHead *sgh,
         Packet *p,
         const uint8_t ipproto,
@@ -131,6 +132,7 @@ void DetectRunPrefilterTx(DetectEngineThreadCtx *det_ctx,
         engine++;
     } while (1);
 
+    // SURITODO: This comment doesn't seem to be true because det_ctx->pmq is reset at the DetectRunPrefilterTx/DetectRulePacketRules
     /* Sort the rule list to lets look at pmq.
      * NOTE due to merging of 'stream' pmqs we *MAY* have duplicate entries */
     if (likely(det_ctx->pmq.rule_id_array_cnt > 1)) {
@@ -189,11 +191,20 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh,
         PACKET_PROFILING_DETECT_END(p, PROF_DETECT_PF_PAYLOAD);
     }
 
+    if (g_rxp_ops_idx > 0)
+        rxp_flush_buffer(&det_ctx->mtc);
+
+
+    if (p->rxp.async_in_progress) {
+        SCLogDebug("async prefilter in progress, skipping further detection");
+        SCReturn;
+    }
+
     /* Sort the rule list to lets look at pmq.
      * NOTE due to merging of 'stream' pmqs we *MAY* have duplicate entries */
-    if (likely(det_ctx->pmq.rule_id_array_cnt > 1)) {
+    if (likely(p->stream_data.pmq.rule_id_array_cnt > 1)) {
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_PF_SORT1);
-        QuickSortSigIntId(det_ctx->pmq.rule_id_array, det_ctx->pmq.rule_id_array_cnt);
+        QuickSortSigIntId(p->stream_data.pmq.rule_id_array, p->stream_data.pmq.rule_id_array_cnt);
         PACKET_PROFILING_DETECT_END(p, PROF_DETECT_PF_SORT1);
     }
     SCReturn;
@@ -264,6 +275,7 @@ int PrefilterAppendPayloadEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
 
     e->name = name;
     e->gid = PrefilterStoreGetId(de_ctx, e->name, e->Free);
+    SCLogNotice("Prefilter %s has gid %u", e->name, e->gid);
     return 0;
 }
 
@@ -617,6 +629,7 @@ static void PrefilterStoreFreeFunc(void *ptr)
 
 void PrefilterDeinit(DetectEngineCtx *de_ctx)
 {
+
     if (de_ctx->prefilter_hash_table != NULL) {
         HashListTableFree(de_ctx->prefilter_hash_table);
     }
@@ -710,7 +723,7 @@ typedef struct PrefilterMpmCtx {
  *  \param txv tx to inspect
  *  \param pectx inspection context
  */
-static void PrefilterMpm(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p, Flow *f,
+__attribute__ ((noinline))  void doPrefilterMpm(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p, Flow *f,
         void *txv, const uint64_t idx, const AppLayerTxData *_txd, const uint8_t flags)
 {
     SCEnter();
@@ -731,10 +744,17 @@ static void PrefilterMpm(DetectEngineThreadCtx *det_ctx, const void *pectx, Pack
     //PrintRawDataFp(stdout, data, data_len);
 
     if (data != NULL && data_len >= mpm_ctx->minlen) {
+        // Transaction based MPM prefilter - not relevant for packet based MPM
         (void)mpm_table[mpm_ctx->mpm_type].Search(
-                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len);
+                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len, NULL);
         PREFILTER_PROFILING_ADD_BYTES(det_ctx, data_len);
     }
+}
+
+static void PrefilterMpm(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p, Flow *f,
+    void *txv, const uint64_t idx, const AppLayerTxData *_txd, const uint8_t flags)
+{
+    doPrefilterMpm(det_ctx, pectx, p, f, txv, idx, _txd, flags);
 }
 
 static void PrefilterGenericMpmFree(void *ptr)
@@ -780,7 +800,7 @@ typedef struct PrefilterMpmPktCtx {
  *  \param txv tx to inspect
  *  \param pectx inspection context
  */
-static void PrefilterMpmPkt(DetectEngineThreadCtx *det_ctx,
+__attribute__ ((noinline)) void doPrefilterMpmPkt(DetectEngineThreadCtx *det_ctx,
         Packet *p, const void *pectx)
 {
     SCEnter();
@@ -801,10 +821,16 @@ static void PrefilterMpmPkt(DetectEngineThreadCtx *det_ctx,
     //PrintRawDataFp(stdout, data, data_len);
 
     if (data != NULL && data_len >= mpm_ctx->minlen) {
+        // RXP: data are not in hugepage memory so instant skip to HS
         (void)mpm_table[mpm_ctx->mpm_type].Search(
-                mpm_ctx, &det_ctx->mtc, &det_ctx->pmq, data, data_len);
+                mpm_ctx, &det_ctx->mtc, &p->stream_data.pmq, data, data_len, NULL);
         PREFILTER_PROFILING_ADD_BYTES(det_ctx, data_len);
     }
+}
+
+void PrefilterMpmPkt(DetectEngineThreadCtx *det_ctx,
+    Packet *p, const void *pectx) {
+        doPrefilterMpmPkt(det_ctx, p, pectx);
 }
 
 static void PrefilterMpmPktFree(void *ptr)

@@ -55,6 +55,9 @@
 #include "flow-timeout.h"
 #include "flow-spare-pool.h"
 #include "flow-worker.h"
+#include "util-mpm-rxp.h"
+
+#include "detect-engine-payload.h"
 
 typedef DetectEngineThreadCtx *DetectEngineThreadCtxPtr;
 
@@ -153,7 +156,14 @@ static int FlowFinish(ThreadVars *tv, Flow *f, FlowWorkerThreadData *fw, void *d
 
 extern uint32_t flow_spare_pool_block_size;
 
-/** \param[in] max_work Max flows to process. 0 if unlimited. */
+/**
+ * @brief Check the work queue for flows that need to be "finished"
+ *
+ *  FlowWorker will put in the workqueue all flows that need to be reassembled and checked for
+ * This is still executed in the context of the worker thread
+ *
+ *  \param[in] max_work Max flows to process. 0 if unlimited.
+ **/
 static void CheckWorkQueue(ThreadVars *tv, FlowWorkerThreadData *fw, FlowTimeoutCounters *counters,
         FlowQueuePrivate *fq, const uint32_t max_work)
 {
@@ -163,6 +173,14 @@ static void CheckWorkQueue(ThreadVars *tv, FlowWorkerThreadData *fw, FlowTimeout
     while ((f = FlowQueuePrivateGetFromTop(fq)) != NULL) {
         FLOWLOCK_WRLOCK(f);
         f->flow_end_flags |= FLOW_END_FLAG_TIMEOUT; //TODO emerg
+
+        if (f->rxp_async_ops && !(suricata_ctl_flags & SURICATA_STOP)) {
+            /* we're in the middle of an async operation, we can't free the flow */
+            FLOWLOCK_UNLOCK(f);
+            if (max_work != 0 && ++i == max_work)
+                break;
+            continue;
+        }
 
         if (f->proto == IPPROTO_TCP) {
             if (!(f->flags & (FLOW_TIMEOUT_REASSEMBLY_DONE | FLOW_ACTION_DROP)) &&
@@ -231,6 +249,11 @@ static inline TmEcode FlowUpdate(ThreadVars *tv, FlowWorkerThreadData *fw, Packe
         }
 #endif
         case FLOW_STATE_LOCAL_BYPASSED: {
+            if (p->rxp.async_in_progress) {
+                SCLogInfo("This should not happen 0x78976543");
+                /* we're in the middle of an async operation, we can't free the packet */
+                return TM_ECODE_OK;
+            }
             StatsAddUI64(tv, fw->local_bypass_pkts, 1);
             StatsAddUI64(tv, fw->local_bypass_bytes, GET_PKT_LEN(p));
             Flow *f = p->flow;
@@ -310,6 +333,7 @@ static TmEcode FlowWorkerThreadInit(ThreadVars *tv, const void *initdata, void *
 
 static TmEcode FlowWorkerThreadDeinit(ThreadVars *tv, void *data)
 {
+    printf("RESULT-threadid-%d-stream-mpm-calls %lu\n", tv->id, g_stream_mpm_calls);
     FlowWorkerThreadData *fw = data;
 
     DecodeThreadVarsFree(tv, fw->dtv);
@@ -391,10 +415,22 @@ static inline void FlowWorkerStreamTCPUpdate(ThreadVars *tv, FlowWorkerThreadDat
     while ((x = PacketDequeueNoLock(&fw->pq))) {
         SCLogDebug("packet %"PRIu64" extra packet %p", p->pcap_cnt, x);
 
+        if (x->rxp.async_in_progress) {
+            /* we're in the middle of an async operation, we can't free the packet */
+            continue;
+        }
+
         if (detect_thread != NULL) {
             FLOWWORKER_PROFILING_START(x, PROFILE_FLOWWORKER_DETECT);
             Detect(tv, x, detect_thread);
             FLOWWORKER_PROFILING_END(x, PROFILE_FLOWWORKER_DETECT);
+        }
+
+        if (x->rxp.async_in_progress) {
+            /* we're in the middle of an async operation, we can't free the packet */
+            if (x->flow)
+                FLOWLOCK_UNLOCK(x->flow);
+            continue;
         }
 
         OutputLoggerLog(tv, x, fw->output_thread);
@@ -444,6 +480,12 @@ static void FlowWorkerFlowTimeout(ThreadVars *tv, Packet *p, FlowWorkerThreadDat
         FLOWWORKER_PROFILING_START(p, PROFILE_FLOWWORKER_DETECT);
         Detect(tv, p, detect_thread);
         FLOWWORKER_PROFILING_END(p, PROFILE_FLOWWORKER_DETECT);
+    }
+
+    if (p->rxp.async_in_progress) {
+        SCLogInfo("Unlikely to get back here");
+        /* we're in the middle of an async operation, we can't free the packet */
+        return;
     }
 
     // Outputs.
@@ -542,13 +584,22 @@ static void PacketAppUpdate2FlowFlags(Packet *p)
     }
 }
 
-static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
+TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
 {
     FlowWorkerThreadData *fw = data;
     void *detect_thread = SC_ATOMIC_GET(fw->detect_thread);
 
     DEBUG_VALIDATE_BUG_ON(p == NULL);
     DEBUG_VALIDATE_BUG_ON(tv->flow_queue == NULL);
+
+    if (p->rxp.rxp_results) {
+        // let's process RXP results
+        if (p->flow) {
+            FLOWLOCK_WRLOCK(p->flow);
+        }
+        Detect(tv, p, detect_thread);
+        goto pkt_cleanup;
+    }
 
     SCLogDebug("packet %"PRIu64, p->pcap_cnt);
 
@@ -619,11 +670,18 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
         FLOWWORKER_PROFILING_END(p, PROFILE_FLOWWORKER_DETECT);
     }
 
+pkt_cleanup:
+    if (p->rxp.async_in_progress) {
+        if (p->flow)
+            FLOWLOCK_UNLOCK(p->flow);
+        /* we're in the middle of an async operation, we can't free the packet */
+        return TM_ECODE_OK;
+    }
     // Outputs.
     OutputLoggerLog(tv, p, fw->output_thread);
 
     /*  Release tcp segments. Done here after alerting can use them. */
-    if (p->flow != NULL) {
+    if (p->flow != NULL && p->flow->rxp_async_ops == 0) {
         DEBUG_ASSERT_FLOW_LOCKED(p->flow);
 
         if (FlowIsBypassed(p->flow)) {
@@ -664,7 +722,9 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
             SCLogDebug("flow drop in place: remove app update flags");
             p->flow->flags &= ~(FLOW_TS_APP_UPDATED | FLOW_TC_APP_UPDATED);
         }
+    }
 
+    if (likely(p->flow)) {
         Flow *f = p->flow;
         FlowDeReference(&p->flow);
         FLOWLOCK_UNLOCK(f);

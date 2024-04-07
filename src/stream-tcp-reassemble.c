@@ -1696,7 +1696,7 @@ static int StreamReassembleRawInline(TcpSession *ssn, const Packet *p,
     }
 
     /* run the callback */
-    r = Callback(cb_data, mydata, mydata_len, mydata_offset);
+    r = Callback(cb_data, mydata, mydata_len, mydata_offset, p);
     BUG_ON(r < 0);
 
     if (return_progress) {
@@ -1758,8 +1758,10 @@ static int StreamReassembleRawInline(TcpSession *ssn, const Packet *p,
  */
 static int StreamReassembleRawDo(const TcpSession *ssn, const TcpStream *stream,
         StreamReassembleRawFunc Callback, void *cb_data, const uint64_t progress_in,
-        const uint64_t re, uint64_t *progress_out, bool eof, bool respect_inspect_depth)
+        const uint64_t re, uint64_t *progress_out, bool eof, bool respect_inspect_depth, Packet *p)
 {
+    // Packet *p needs to be used here because PrefilterPktStream is registered as a payload prefilter
+    // results of the payload prefilters are aggregated in p to be later merged and evaluated in the det_ctx->match_array
     SCEnter();
     int r = 0;
 
@@ -1811,7 +1813,7 @@ static int StreamReassembleRawDo(const TcpSession *ssn, const TcpStream *stream,
         SCLogDebug("data %p len %u", mydata, mydata_len);
 
         /* we have data. */
-        r = Callback(cb_data, mydata, mydata_len, mydata_offset);
+        r = Callback(cb_data, mydata, mydata_len, mydata_offset, p);
         BUG_ON(r < 0);
 
         if (mydata_offset == progress) {
@@ -1850,10 +1852,10 @@ int StreamReassembleForFrame(TcpSession *ssn, TcpStream *stream, StreamReassembl
 
     uint64_t unused = 0;
     return StreamReassembleRawDo(
-            ssn, stream, Callback, cb_data, offset, app_progress, &unused, eof, false);
+            ssn, stream, Callback, cb_data, offset, app_progress, &unused, eof, false, NULL);
 }
 
-int StreamReassembleRaw(TcpSession *ssn, const Packet *p,
+int StreamReassembleRaw(TcpSession *ssn, Packet *p,
                         StreamReassembleRawFunc Callback, void *cb_data,
                         uint64_t *progress_out, bool respect_inspect_depth)
 {
@@ -1915,7 +1917,7 @@ int StreamReassembleRaw(TcpSession *ssn, const Packet *p,
     SCLogDebug("last_ack_abs %" PRIu64, last_ack_abs);
 
     return StreamReassembleRawDo(ssn, stream, Callback, cb_data, progress, last_ack_abs,
-            progress_out, (p->flags & PKT_PSEUDO_STREAM_END), respect_inspect_depth);
+            progress_out, (p->flags & PKT_PSEUDO_STREAM_END), respect_inspect_depth, p);
 }
 
 int StreamReassembleLog(const TcpSession *ssn, const TcpStream *stream,
@@ -1930,7 +1932,7 @@ int StreamReassembleLog(const TcpSession *ssn, const TcpStream *stream,
     SCLogDebug("last_ack_abs %" PRIu64, last_ack_abs);
 
     return StreamReassembleRawDo(
-            ssn, stream, Callback, cb_data, progress_in, last_ack_abs, progress_out, eof, false);
+            ssn, stream, Callback, cb_data, progress_in, last_ack_abs, progress_out, eof, false, NULL);
 }
 
 /** \internal

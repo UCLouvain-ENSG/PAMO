@@ -290,6 +290,8 @@ void SCLogErr(int x, const char *file, const char *func, const int line, const c
 
 #define SCReturnStruct(x)                 return x
 
+#define SCAssert(...)                 do { } while (0)
+
 /* Please use it only for debugging purposes */
 #else
 
@@ -496,6 +498,15 @@ void SCLogErr(int x, const char *file, const char *func, const int line, const c
                                   }                                          \
                                   return x;                                  \
                               } while(0)
+
+                              /**
+ * \brief Macro used to do assertions only when compiled in debug mode
+ *
+ */
+#define SCAssert(cond)                                                                            \
+    assert(cond);
+#define SCAssert(cond,...)                                                                            \
+    if (!cond) {SCLogDebug(__VA_ARGS__); assert(cond);}
 
 #endif /* DEBUG */
 

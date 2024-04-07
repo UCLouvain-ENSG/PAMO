@@ -127,14 +127,14 @@ void StreamTcpReassembleConfigEnableOverlapCheck(void);
 void TcpSessionSetReassemblyDepth(TcpSession *ssn, uint32_t size);
 
 typedef int (*StreamReassembleRawFunc)(
-        void *data, const uint8_t *input, const uint32_t input_len, const uint64_t offset);
+        void *data, const uint8_t *input, const uint32_t input_len, const uint64_t offset, Packet *p);
 
 int StreamReassembleForFrame(TcpSession *ssn, TcpStream *stream, StreamReassembleRawFunc Callback,
         void *cb_data, const uint64_t offset, const bool eof);
 int StreamReassembleLog(const TcpSession *ssn, const TcpStream *stream,
         StreamReassembleRawFunc Callback, void *cb_data, const uint64_t progress_in,
         uint64_t *progress_out, const bool eof);
-int StreamReassembleRaw(TcpSession *ssn, const Packet *p,
+int StreamReassembleRaw(TcpSession *ssn, Packet *p,
         StreamReassembleRawFunc Callback, void *cb_data,
         uint64_t *progress_out, bool respect_inspect_depth);
 void StreamReassembleRawUpdateProgress(TcpSession *ssn, Packet *p, const uint64_t progress);
