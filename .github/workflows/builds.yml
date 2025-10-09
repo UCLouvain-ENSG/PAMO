@@ -253,7 +253,7 @@ jobs:
 
       # Download and extract dependency archives created during prep
       # job.
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -396,7 +396,7 @@ jobs:
 
       # Download and extract dependency archives created during prep
       # job.
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -494,14 +494,14 @@ jobs:
 
       # Download and extract dependency archives created during prep
       # job.
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xvf prep/libhtp.tar.gz
       - run: tar xvf prep/suricata-update.tar.gz
       - run: tar xvf prep/suricata-verify.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -587,7 +587,7 @@ jobs:
                 which \
                 zlib-devel
       - name: Download suricata.tar.gz
-        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: dist
       - run: tar zxvf suricata-*.tar.gz --strip-components=1
@@ -606,7 +606,7 @@ jobs:
           test -e /usr/local/lib/suricata/python/suricata/update/configs/modify.conf
           test -e /usr/local/lib/suricata/python/suricata/update/configs/threshold.in
           test -e /usr/local/lib/suricata/python/suricata/update/configs/update.yaml
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -676,7 +676,7 @@ jobs:
                 which \
                 zlib-devel
       - name: Download suricata.tar.gz
-        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: dist
       - run: tar zxvf suricata-*.tar.gz --strip-components=1
@@ -695,7 +695,7 @@ jobs:
           test -e /usr/local/lib/suricata/python/suricata/update/configs/modify.conf
           test -e /usr/local/lib/suricata/python/suricata/update/configs/threshold.in
           test -e /usr/local/lib/suricata/python/suricata/update/configs/update.yaml
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -771,7 +771,7 @@ jobs:
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -869,7 +869,7 @@ jobs:
                 zlib-devel
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -965,7 +965,7 @@ jobs:
                 zlib-devel
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -1066,7 +1066,7 @@ jobs:
                 zlib-devel
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -1157,7 +1157,7 @@ jobs:
                 zlib-devel
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -1244,7 +1244,7 @@ jobs:
       - run: adduser suricata
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -1337,7 +1337,7 @@ jobs:
                 zlib-devel
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -1412,12 +1412,12 @@ jobs:
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.63.0 -y
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -1542,12 +1542,12 @@ jobs:
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.63.0 -y
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -1642,13 +1642,13 @@ jobs:
                 dpdk-dev
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -1731,7 +1731,7 @@ jobs:
       - run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.62.0 -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Download suricata.tar.gz
-        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: dist
       - run: tar zxvf suricata-*.tar.gz --strip-components=1
@@ -1801,12 +1801,12 @@ jobs:
                 exuberant-ctags
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -1888,12 +1888,12 @@ jobs:
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -1982,12 +1982,12 @@ jobs:
 
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -2087,12 +2087,12 @@ jobs:
           cd $HOME
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -2171,7 +2171,7 @@ jobs:
               zlib1g-dev
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -2257,7 +2257,7 @@ jobs:
               zlib1g-dev
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -2339,11 +2339,11 @@ jobs:
               zlib1g-dev
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -2429,13 +2429,13 @@ jobs:
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -2510,13 +2510,13 @@ jobs:
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: cbindgen
           path: prep
@@ -2571,7 +2571,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - name: Downloading prep archive
-        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -2613,7 +2613,7 @@ jobs:
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -2669,7 +2669,7 @@ jobs:
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
@@ -2713,7 +2713,7 @@ jobs:
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
       - run: git config --global --add safe.directory /__w/suricata/suricata
-      - uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: prep
           path: prep
