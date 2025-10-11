@@ -352,7 +352,7 @@ void DPDKLoadBalance() {
         }
     }
     if (!init) {
-        SCLogError("Balancer not initialized");
+        //SCLogError("Balancer not initialized");
         return;
     }
 

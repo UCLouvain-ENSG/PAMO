@@ -6,18 +6,19 @@ Here are the steps to compile PAMO.
 
 ### Dependencies
 
-WORK IN PROGRESS: We're still cleaning the steps, stay tuned ;)
+All examples are taken for Ubuntu (Server) 22.04.
+
+We assume you start in this checked out repository.
 
 #### DPDK
 
 Download and build DPDK with:
 
 ```bash
-#!/bin/bash
 package_root=$(pwd)
 package_name="DPDK"
 dest_dir=dist
-repo=https:#github.com/DPDK/dpdk.git
+repo=https://github.com/DPDK/dpdk.git
 repo_version=22.11-dut
 repo_hash=v22.11
 repo_dirname=dpdk-$repo_version
@@ -39,19 +40,25 @@ meson setup \
     --prefix $PWD/$dest_dir $build_dir .
 cd $build_dir
 ninja -j 16 install
+cd ..
+echo "export DPDK_PATH=$package_root/$repo_dir_name/$dest_dir" >> env.rc
+echo "export LD_LIBRARY_PATH=$package_root/$repo_dir_name/$dest_dir/lib/x86_64-linux-gnu:"'$LD_LIBRARY_PATH' >> env.rc
+echo "export LD_LIBRARY_PATH=$package_root/$repo_dir_name/$dest_dir/lib:"'$LD_LIBRARY_PATH' >> env.rc
+echo "export PKG_CONFIG_PATH=$package_root/$repo_dir_name/$dest_dir/lib/x86_64-linux-gnu/pkgconfig:"'$PKG_CONFIG_PATH' >> env.rc
+mv env.rc ..
+cd ..
 ```
 
 #### DOCA
 
 Altough we do use the RegEx engine from DPDK, you'll need DOCA to set your BF2 to DOCA 2.5 and enable the regex use from the host.
 
-Install DOCA with:
+Install DOCA with (beware of the ubuntu22.04 in the first line, you may change that):
 
 ```bash
 export DOCA_URL="https://linux.mellanox.com/public/repo/doca/2.5.0/ubuntu22.04/x86_64/"
 curl https://linux.mellanox.com/public/repo/doca/GPG-KEY-Mellanox.pub | gpg --dearmor > /etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub
-echo "deb [signed-by=/etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub] $DOCA_URL ./" |
-sudo tee /etc/apt/sources.list.d/doca.list
+echo "deb [signed-by=/etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub] $DOCA_URL ./" | sudo tee /etc/apt/sources.list.d/doca.list
 # Update and install required packages
 sudo apt-get update
 sudo apt-get -y install doca-all doca-networking
@@ -59,8 +66,14 @@ sudo apt-get -y install doca-all doca-networking
 
 #### Suricata dependencies
 
+Suricata uses Rust, we used 1.90, so we suggest overriding the version:
+
 ```bash
-#!/bin/bash
+rustup install 1.90
+rustup override set 1.90
+```
+
+```bash
 if $(dpkg -s cbindgen > /dev/null); then
     echo "Removing the dpkg cbindgen package"
     sudo apt remove cbindgen
@@ -77,60 +90,92 @@ python3 -m pip -q install numpy matplotlib pandas pyyaml
 You are now ready to compile PAMO:
 
 ```bash
-#!/bin/bash
 package_root=$(pwd)
 package_name="suricata"
 dest_dir=dist
-repo_dirname=.
-skip_build="false"
-dpdk_env=...
-if [ $? -ne 0 ]; then
-    echo "Error while resolving depency: $dpdk_env"
-    exit 1
-fi
-source $dpdk_env
-if [ -d $repo_dirname ]; then
-    #Ask the user if it wants to delete the existing repo
-    echo "The package $package_name:$repo_version already exists."
-    read -p "Delete ? (y/n) " yn
-    if [ "$yn" = "y" ]; then
-        echo "Deleting..."
-        rm -rf $repo_dirname
-    else
-        echo "Skipping build step..."
-        skip_build="true"
-    fi
-fi
-if [ "$skip_build" = "false" ]; then
-    cd $repo_dirname
-    ./scripts/bundle.sh
-    ./autogen.sh
-    CFLAGS="-O3" ./configure --prefix $(pwd)/$dest_dir --enable-dpdk
-    make -j 24 install
-    make install-conf
-fi
+
+source env.rc
+
+./scripts/bundle.sh
+./autogen.sh
+CFLAGS="-O3" ./configure --prefix $(pwd)/$dest_dir --enable-dpdk
+make -j 16
+make install
+make install-conf
+
 cd $package_root
-./gen_env.sh $repo_dirname $dest_dir $repo_version
-env_file=$package_root/env-$repo_version.sh
-#We add dpdk as a dependency in the env file
-cat $dpdk_env > /tmp/env
-cat $env_file >> /tmp/env
-mv /tmp/env $env_file
-source $env_file
 ```
 
 ## Useage
 
 ### Configuration
 
-PAMO only extends suricata config file. A sample with PAMO variables is given in `pamo.conf.yaml`
+PAMO only extends suricata config file. A sample with PAMO variables is given in `pamo.conf.yaml`.
+
+The minimal think to change is HOME_NET according to the trace you use. But in practice one should read all of them carefully.
+
+
+### Enable RegEx engine
+
+Taken from https://docs.nvidia.com/doca/archive/doca-v2.2.0/regex-programming-guide/index.html
+
+```bash
+host> sudo /etc/init.d/openibd stop
+host> sudo echo 1024 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+```
+
+On the BF
+```bash
+echo 1 > /sys/bus/pci/devices/0000\:03\:00.0/regex/pf/regex_en
+```
+
+Then re-enable OpenIBD:
+
+```bash
+sudo /etc/init.d/openibd start
+```
 
 ### Running
 
 ```bash
+log_dir=logs
+mkdir -p $log_dir
 RULES_PATH=RULES_FILES
-suricata -c pamo.conf.yml --dpdk -l $log_dir  -S ${RULES_PATH} -v
+dist/bin/suricata -c pamo.conf.yaml --dpdk -l $log_dir  -S ${RULES_PATH} -v
 ```
+
+### Testing with a trace
+
+Here we take a trace from the Stratosphere dataset as the one we use in the paper is not available:
+
+```bash
+wget https://mcfp.felk.cvut.cz/publicDatasets/CTU-Mixed-Capture-1/2015-07-28_mixed.before.infection.pcap
+```
+
+
+
+### Performance test
+A small npf script is given to replay that trace once as fast as possible. NPF will download fastclick and use a script to preload the trace in memory and play the packets out in one step. Now the trace has 500k packets of a unique visitor. This is quite unrealistic as the trace will be accelerated by multiple orders of magnitude and will not effectively have many concurrent connection. But this enables a simpler test setup.
+
+
+```bash
+npf --test play.npf --tags replay dump --cluster client=elrond,nic=0 --variables trace=path/to/2015-07-28_mixed.before.infection.pcap LIMIT=1000000 --show-files --tags gen_pipeline trace_is_ip gen_norx gen_nolat
+```
+This is just a way to replay the trace quickly, your preferred usual way (pktgen-dpdk, etc) is fine.
+
+After the trace is replayed, you can kill PAMO with CTRL+C:
+
+```bash
+Notice: device: 51:00.0: packets: 541045, drops: 135429 (25.03%), invalid chksum: 0 [LiveDeviceListClean:util-device.c:325]
+```
+Now change the pamo.conf.yaml file to disable the RXP. Set `mpm-algo: ` to `hs`.
+
+Re-do the test and observe the drop has increased by 10%
+```bash
+Notice: device: 51:00.0: packets: 541045, drops: 187518 (34.66%), invalid chksum: 0 [LiveDeviceListClean:util-device.c:325]
+```
+
+
 
 ## RXPBench
 RXPBench, the benchmarking tool for the RXP engine is available at [https:#github.com/UCLouvain-ENSG/PAMO-RXPBench/](https:#github.com/UCLouvain-ENSG/PAMO-RXPBench/).
