@@ -15,9 +15,9 @@ suricata-version: "8.0"
 vars:
   # more specific is better for alert accuracy and performance
   address-groups:
-    HOME_NET: [192.168.0.0/16]
+    #    HOME_NET: "[192.168.0.0/16]"
     #HOME_NET: "[192.168.0.0/16]"
-    #HOME_NET: "[10.0.0.0/8]"
+    HOME_NET: "[10.0.0.0/8]"
     #HOME_NET: "[172.16.0.0/12]"
     #HOME_NET: "any"
 
@@ -71,14 +71,14 @@ stats:
 outputs:
   # a line based alerts log similar to Snort's fast.log
   - fast:
-      enabled: $SURICATA_DO_FAST
+      enabled: yes
       filename: fast.log
       append: no
       #filetype: regular # 'regular', 'unix_stream' or 'unix_dgram'
 
   # Extensible Event Format (nicknamed EVE) event log in JSON format
   - eve-log:
-      enabled: $SURICATA_DO_EVE
+      enabled: no
       filetype: regular #regular|syslog|unix_dgram|unix_stream|redis
       filename: eve.json
       append: no
@@ -546,7 +546,7 @@ logging:
   # compiled with the --enable-debug configure option.
   #
   # This value is overridden by the SC_LOG_LEVEL env var.
-  default-log-level: $SURICATA_LOG_LEVEL
+  default-log-level: info
 
   # The default output format.  Optional parameter, should default to
   # something reasonable if not provided.  Can be overridden in an
@@ -593,21 +593,22 @@ dpdk:
     
     proc-type: primary
     
-    a: ${self:0:pci},class=eth:regex,representor=[0,65535]
+    a: 51:00.0,class=eth:regex,representor=[0,65535]
     
     # lcore: (0)@0,(2-3)@8,(4-5)@24
 
   # DPDK capture support
   # RX queues (and TX queues in IPS mode) are assigned to cores in 1:1 ratio
   interfaces:
-    - interface: ${self:0:pci} # PCIe address of the NIC port
+    - interface: 51:00.0 # PCIe address of the NIC port
       # Threading: possible values are either "auto" or number of threads
       # - auto takes all cores
       # in IPS mode it is required to specify the number of cores and the numbers on both interfaces must match
-      threads: 8
+      threads: 4
       rxp-min-buflen: -16 # minimum number of bytes that buffer needs to contain to be evaluated by RXP engine. Smaller buffers are passed to HS falback
       rxp-desc: 256
 
+      rsspp-enable: no
       rxp-desc-max: 2048
       rxp-buffer-max: 0
       # 1 - use RXP engine for all packets
@@ -631,7 +632,7 @@ dpdk:
       # To approximately calculate required amount of space (in bytes) for interface's mempool: mempool-size * mtu
       # Make sure you have enough allocated hugepages.
       # The optimum size for the packet memory pool (in terms of memory usage) is power of two minus one: n = (2^q - 1)
-      mempool-size: $MEMPOOL_SIZE # 1048576 # 262143 # The number of elements in the mbuf pool
+      mempool-size: 1048576 # 262143 # The number of elements in the mbuf pool
 
       # Mempool cache size must be lower or equal to:
       #     - RTE_MEMPOOL_CACHE_MAX_SIZE (by default 512) and
@@ -1325,7 +1326,7 @@ stream:
   reassembly:
     memcap: 8gb
     #memcap-policy: ignore
-    depth: 1mb                  # reassemble 1mb into a stream
+    depth: 100kb                  # reassemble 1mb into a stream
     toserver-chunk-size: 10000
     toclient-chunk-size: 10000 #COLIN these are important settings for the RXP engine
     randomize-chunk-size: yes
@@ -1460,7 +1461,7 @@ detect:
 # ruleset is small enough to fit in memory, in which case one can
 # use "full" with "ac".  The rest of the mpms can be run in "full" mode.
 
-mpm-algo: rxp #rxp #rxp # hs # rxp #TODO NPF
+mpm-algo: rxp #hs
 
 
 # Suricata is multi-threaded. Here the threading can be influenced.
