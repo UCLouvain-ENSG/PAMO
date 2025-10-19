@@ -111,7 +111,7 @@ make install-conf
 cd $package_root
 ```
 
-## Useage
+## Usage
 
 ### Configuration
 
@@ -237,9 +237,8 @@ Notice: dpdk: 51:00.0: releasing packet mempool [DPDKFreeDevice:util-dpdk.c:165]
 ```
 Note that PAMO dropped 47% of traffic.
 
-As before, change the Suricata launch line to use HS.
+As before, change the Suricata launch line to use HS, and launch the test again:
 
-Re-do the test and observe the drop has increased by 10%
 ```bash
 Info: counters: Alerts: 6 [StatsLogSummary:counters.c:890]
 Notice: device: 51:00.0: packets: 541044, drops: 334480 (61.82%), invalid chksum: 0 [LiveDeviceListClean:util-device.c:325]
