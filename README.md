@@ -247,7 +247,7 @@ Notice: dpdk: 51:00.0: releasing packet mempool [DPDKFreeDevice:util-dpdk.c:165]
 Without the RXP, the drop rate increases to 61.82%. PAMO can process around 30% more traffic (NB: again, for a correct measurement we need to do zero-loss throughput as in the paper).
 
 ## RXPBench
-RXPBench, the benchmarking tool for the RXP engine is available at [https:#github.com/UCLouvain-ENSG/PAMO-RXPBench/](https:#github.com/UCLouvain-ENSG/PAMO-RXPBench/).
+RXPBench, the benchmarking tool for the RXP engine is available at [https://github.com/UCLouvain-ENSG/PAMO-RXPBench/](https://github.com/UCLouvain-ENSG/PAMO-RXPBench/).
 
 ## Trace acceleration
-Scripts to split and rewrite a trace as done in the paper are available at [https:#github.com/uclouvain-ensg/pamo-traces](https:#github.com/uclouvain-ensg/pamo-traces).
+Scripts to split and rewrite a trace as done in the paper are available at [https://github.com/uclouvain-ensg/pamo-traces](https://github.com/uclouvain-ensg/pamo-traces).
