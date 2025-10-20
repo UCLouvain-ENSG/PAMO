@@ -56,12 +56,12 @@ cd ..
 
 #### DOCA
 
-Altough we do use the RegEx engine from DPDK, you'll need DOCA to set your BF2 to DOCA 2.5 and enable the regex use from the host.
+Altough we do use the RegEx engine from DPDK, you'll need DOCA to set your BF2 to DOCA 2.0.2 and enable the regex use from the host.
 
 Install DOCA with (beware of the ubuntu22.04 in the first line, you may change that):
 
 ```bash
-export DOCA_URL="https://linux.mellanox.com/public/repo/doca/2.5.0/ubuntu22.04/x86_64/"
+export DOCA_URL="https://linux.mellanox.com/public/repo/doca/2.0.2/ubuntu22.04/x86_64/"
 curl https://linux.mellanox.com/public/repo/doca/GPG-KEY-Mellanox.pub | gpg --dearmor > /etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub
 echo "deb [signed-by=/etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub] $DOCA_URL ./" | sudo tee /etc/apt/sources.list.d/doca.list
 # Update and install required packages
