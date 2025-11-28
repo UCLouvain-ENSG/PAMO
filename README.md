@@ -82,7 +82,13 @@ The default password is ubuntu/ubuntu, you'll have to change it at first boot.
 
 #### Suricata dependencies
 
-Suricata uses Rust, we used 1.90, so we suggest overriding the version:
+Suricata uses Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+We used 1.90, so we suggest overriding the version:
 
 ```bash
 rustup install 1.90
