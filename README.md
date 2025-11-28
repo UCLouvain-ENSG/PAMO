@@ -61,13 +61,24 @@ Altough we do use the RegEx engine from DPDK, you'll need DOCA to set your BF2 t
 Install DOCA with (beware of the ubuntu22.04 in the first line, you may change that):
 
 ```bash
-export DOCA_URL="https://linux.mellanox.com/public/repo/doca/2.0.2/ubuntu22.04/x86_64/"
+export DOCA_URL="https://linux.mellanox.com/public/repo/doca/2.0.2/ubuntu22.04/amd64/"
 curl https://linux.mellanox.com/public/repo/doca/GPG-KEY-Mellanox.pub | gpg --dearmor > /etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub
 echo "deb [signed-by=/etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub] $DOCA_URL ./" | sudo tee /etc/apt/sources.list.d/doca.list
 # Update and install required packages
 sudo apt-get update
-sudo apt-get -y install doca-all doca-networking
+sudo apt-get -y install doca-all pv
 ```
+
+!WARNING!
+If you're doing this for the first time, you need to flash the BF2.
+Download `doca_2.0.2_bsp_4.0.3_ubuntu_22.04-10.23-04.prod.bfb` from https://docs.nvidia.com/doca/archive/doca-v2.0.2/installation-guide-for-linux/index.html#supported-bluefield-devices
+
+!WARNING! This will flash the device and remove all software
+```bash
+sudo bfb-install --rshim rshim0 --bfb DOCA_2.0.2_BSP_4.0.3_Ubuntu_22.04-10.23-04.prod.bfb
+```
+
+The default password is ubuntu/ubuntu, you'll have to change it at first boot.
 
 #### Suricata dependencies
 
