@@ -101,7 +101,7 @@ if $(dpkg -s cbindgen > /dev/null); then
     sudo apt remove cbindgen
 fi
 sudo apt install -q libyaml-dev rustc cargo libhyperscan-dev bear libcap-ng-dev libmagic-dev libmagic-dev liblz4-dev libnet1-dev \
-libisal-dev libbpf-dev libibverbs-dev rdma-core #dependencies for mellanox cards
+libisal-dev libbpf-dev libibverbs-dev rdma-core libtool m4 automake #dependencies for mellanox cards
 
 cargo install --version 0.26.0 cbindgen
 python3 -m pip -q install numpy matplotlib pandas pyyaml
@@ -180,7 +180,7 @@ The general command to run PAMO is the following. We propose below two small exp
 log_dir=logs
 mkdir -p $log_dir
 RULES_PATH=RULES_FILES
-dist/bin/suricata -c pamo.conf.yaml --dpdk -l $log_dir  -S ${RULES_PATH} -v
+sudo dist/bin/suricata -c pamo.conf.yaml --dpdk -l $log_dir  -S ${RULES_PATH} -v
 ```
 
 ## Functional experiments with a trace
@@ -262,6 +262,17 @@ Notice: device: 51:00.0: packets: 541044, drops: 334480 (61.82%), invalid chksum
 Notice: dpdk: 51:00.0: releasing packet mempool [DPDKFreeDevice:util-dpdk.c:165]
 ```
 Without the RXP, the drop rate increases to 61.82%. PAMO can process around 30% more traffic (NB: again, for a correct measurement we need to do zero-loss throughput as in the paper).
+
+## Running on the BlueField 2
+
+Follow the instructions starting with Suricata dependencies **removing libhyperscan-dev**. Before configuring the build system of suricata, you also have to remove "libhyperscan", and install "libvectorscan-dev" in place. Libvectorscan is the ARM version of Hyperscan:
+
+```bash
+sudo apt remove libhyperscan
+sudo apt install libvectorscan-dev
+```
+
+
 
 ## RXPBench
 RXPBench, the benchmarking tool for the RXP engine is available at [https://github.com/UCLouvain-ENSG/PAMO-RXPBench/](https://github.com/UCLouvain-ENSG/PAMO-RXPBench/).
