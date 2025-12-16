@@ -1,9 +1,11 @@
 # PAMO
-The repository containing PAMO source code based on Suricata. PAMO adds support for the RXP engine through DPDK. In practice tested with a BlueField 2, but also available in the BlueField 3 and some Marvell NICs. PAMO with the RXP engine disabled is effectively plain old Suricata.
+PAMO enables offloading pattern matching in Suricata. PAMO adds support for the RXP engine available in a few SmartNICs through DPDK.
+PAMO is published at Middleware'25, check the [paper](https://dl.acm.org/doi/pdf/10.1145/3721462.3770768) for more details on the internals.
+In practice PAMO was developed and tested with the RXP engine of a BlueField 2, but it is also available in the BlueField 3 and some Marvell NICs. PAMO with the RXP engine disabled is effectively plain old Suricata.
 
 We first explain how to install the dependencies (DPDK, DOCA) and compile PAMO.
 We then explain how to run PAMO.
-We present two test cases: a first one showing the number of match/alerts is the same with and without the RXP engine.
+We then present two test cases: a first one showing the number of match/alerts is the same with and without the RXP engine.
 A second test case comparing the performance of PAMO with and without the RXP engine.
 
 ## Installation
