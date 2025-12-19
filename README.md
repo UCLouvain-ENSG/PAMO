@@ -155,13 +155,13 @@ Here is a view of the main options for PAMO:
 
 ```
 
-### Enable RegEx engine
+### Enable the RegEx engine
 
 Taken from https://docs.nvidia.com/doca/archive/doca-v2.2.0/regex-programming-guide/index.html
 
 ```bash
 host> sudo /etc/init.d/openibd stop
-host> sudo echo 1024 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+host> echo 1024 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 ```
 
 On the BF
@@ -267,11 +267,18 @@ Without the RXP, the drop rate increases to 61.82%. PAMO can process around 30% 
 
 ## Running on the BlueField 2
 
-Follow the instructions starting with Suricata dependencies **removing libhyperscan-dev**. Before configuring the build system of suricata, you also have to remove "libhyperscan", and install "libvectorscan-dev" in place. Libvectorscan is the ARM version of Hyperscan:
+Follow the instructions starting with Suricata dependencies **removing libhyperscan-dev**. Libvectorscan is the ARM version of Hyperscan. Before configuring the build system of suricata, you also have to remove "libhyperscan". Unfortunately the version distributed with the OS "libvectorscan-dev" seems to crash, probably due to a version compiled for another ARM architecture. 
 
 ```bash
 sudo apt remove libhyperscan
-sudo apt install libvectorscan-dev
+git clone git@github.com:VectorCamp/vectorscan.git
+cd vectorscan
+sudo apt install build-essential cmake ragel pkg-config libsqlite3-dev libpcap-dev
+mkdir build
+cd build
+cmake ../
+make -j12
+sudo make install
 ```
 
 
